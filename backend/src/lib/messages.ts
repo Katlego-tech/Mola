@@ -69,8 +69,9 @@ export function parseClientMessage(
     case 'leave':
       if (Object.keys(message).length === 3
         && 'ticketNo' in message && typeof message.ticketNo === 'number'
-        && Number.isInteger(message.ticketNo)
-        && 'secret' in message && typeof message.secret === 'string') {
+        && Number.isSafeInteger(message.ticketNo) && message.ticketNo >= 1
+        && 'secret' in message && typeof message.secret === 'string'
+        && message.secret.length >= 1 && message.secret.length <= 128) {
         return { action: message.action, ticketNo: message.ticketNo, secret: message.secret };
       }
       return { error: 'bad_request' };
@@ -79,7 +80,8 @@ export function parseClientMessage(
       if (Object.keys(message).length === 3
         && 'desk' in message && typeof message.desk === 'string'
         && /^[A-Za-z0-9 -]{1,20}$/.test(message.desk)
-        && 'staffKey' in message && typeof message.staffKey === 'string') {
+        && 'staffKey' in message && typeof message.staffKey === 'string'
+        && message.staffKey.length >= 1 && message.staffKey.length <= 128) {
         return { action: message.action, desk: message.desk, staffKey: message.staffKey };
       }
       return { error: 'bad_request' };

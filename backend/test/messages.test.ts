@@ -41,8 +41,13 @@ describe('parseClientMessage', () => {
     }
   });
 
-  it.each(['resume', 'confirm', 'leave'] as const)('requires an integer ticketNo and string secret for %s', (action) => {
-      for (const ticketNo of [undefined, null, '42', true, 1.5, [], {}, Infinity]) {
+  it('refuses an own __proto__ field in raw JSON', () => {
+    expect(parseClientMessage('{"action":"join","__proto__":{}}'))
+      .toEqual({ error: 'bad_request' });
+  });
+
+  it.each(['resume', 'confirm', 'leave'] as const)('requires a positive safe integer ticketNo and string secret for %s', (action) => {
+      for (const ticketNo of [undefined, null, '42', true, 0, -0, -1, 1.5, 1e308, 2 ** 53, [], {}, Infinity]) {
         expect(parseClientMessage(JSON.stringify({ action, ticketNo, secret })))
           .toEqual({ error: 'bad_request' });
       }
@@ -50,16 +55,31 @@ describe('parseClientMessage', () => {
         expect(parseClientMessage(JSON.stringify({ action, ticketNo: 42, secret: invalidSecret })))
           .toEqual({ error: 'bad_request' });
       }
-      expect(parseClientMessage(`{"action":"${action}","ticketNo":1e400,"secret":"secret"}`))
-        .toEqual({ error: 'bad_request' });
+      for (const ticketNo of ['-0', '1e400', '9007199254740993']) {
+        expect(parseClientMessage(`{"action":"${action}","ticketNo":${ticketNo},"secret":${JSON.stringify(secret)}}`))
+          .toEqual({ error: 'bad_request' });
+      }
     });
 
-  it.each(['resume', 'confirm', 'leave'] as const)('does not impose additional ticket number or secret restrictions on %s', (action) => {
-      for (const ticketNo of [0, -1]) {
-        const message = { action, ticketNo, secret: '' };
+  it.each(['resume', 'confirm', 'leave'] as const)('accepts positive safe integer boundaries for %s', (action) => {
+      for (const ticketNo of [1, Number.MAX_SAFE_INTEGER]) {
+        const message = { action, ticketNo, secret };
         expect(parseClientMessage(JSON.stringify(message))).toEqual(message);
       }
     });
+
+  it.each(['resume', 'confirm', 'leave'] as const)('requires secret length 1 to 128 for %s', (action) => {
+    const generatedSecret = randomUUID().repeat(4);
+    for (const length of [1, 128]) {
+      const message = { action, ticketNo: 42, secret: generatedSecret.slice(0, length) };
+      expect(parseClientMessage(JSON.stringify(message))).toEqual(message);
+    }
+    for (const length of [0, 129, 144]) {
+      expect(parseClientMessage(JSON.stringify({
+        action, ticketNo: 42, secret: generatedSecret.slice(0, length),
+      }))).toEqual({ error: 'bad_request' });
+    }
+  });
 
   it.each([undefined, null, 42, true, [], {}, '', 'a'.repeat(21), 'Desk_2',
     'Desk.2', 'Désk', 'Desk\t2', 'Desk\n2', 'Desk\n'])('refuses a missing, non-string, or invalid desk: %j', (desk) => {
@@ -68,7 +88,7 @@ describe('parseClientMessage', () => {
     });
 
   it.each(['a', 'Z', '0', '-', ' ', 'Az09 -'.padEnd(20, 'x')])('accepts a desk matching the specified character and length limits: %j', (desk) => {
-      const message = { action: 'callNext', desk, staffKey: '' };
+      const message = { action: 'callNext', desk, staffKey: randomUUID() };
       expect(parseClientMessage(JSON.stringify(message))).toEqual(message);
     });
 
@@ -77,6 +97,19 @@ describe('parseClientMessage', () => {
         .toEqual({ error: 'bad_request' });
     });
 
+  it('requires staffKey length 1 to 128', () => {
+    const generatedKey = randomUUID().repeat(4);
+    for (const length of [1, 128]) {
+      const message = { action: 'callNext', desk: 'Desk 2', staffKey: generatedKey.slice(0, length) };
+      expect(parseClientMessage(JSON.stringify(message))).toEqual(message);
+    }
+    for (const length of [0, 129, 144]) {
+      expect(parseClientMessage(JSON.stringify({
+        action: 'callNext', desk: 'Desk 2', staffKey: generatedKey.slice(0, length),
+      }))).toEqual({ error: 'bad_request' });
+    }
+  });
+
   it('accepts exactly 1024 bytes and refuses 1025 bytes, including JSON whitespace', () => {
     const body = JSON.stringify({ action: 'join' });
     expect(parseClientMessage(body.padEnd(1024))).toEqual({ action: 'join' });
@@ -84,7 +117,7 @@ describe('parseClientMessage', () => {
   });
 
   it('measures the body limit in UTF-8 bytes', () => {
-    const message = { action: 'resume', ticketNo: 42, secret: 'é'.repeat(480) };
+    const message = { action: 'resume', ticketNo: 42, secret: `${randomUUID()}é` };
     const body = JSON.stringify(message);
     expect(Buffer.byteLength(body)).toBeLessThan(1024);
     const atLimit = body.padEnd(body.length + 1024 - Buffer.byteLength(body));
