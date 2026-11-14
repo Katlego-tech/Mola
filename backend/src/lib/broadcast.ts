@@ -14,7 +14,7 @@ export async function broadcast(officeId: string, rules: Board['rules']): Promis
 
     for (const ticket of snapshot.tickets) {
       const connectionId = ticket.connectionId;
-      if (connectionId !== undefined) {
+      if (connectionId !== undefined && ticket.expiresAt > nowMs / 1000) {
         deliveries.push({
           connectionId,
           payload: { type: 'status', ticket: ticketView(ticket, positionMap), board },

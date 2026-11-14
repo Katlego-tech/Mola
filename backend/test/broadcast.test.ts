@@ -68,6 +68,18 @@ describe('broadcast', () => {
     } });
   });
 
+  it('does not send status to a called ticket expiring at the board timestamp but still sends the screen board', async () => {
+    vi.mocked(loadOffice).mockResolvedValue(snapshot([ticket(1, {
+      status: 'called', desk: 'Desk 1', taskToken: randomUUID(),
+      deadline: nowMs + 30_000, expiresAt: nowMs / 1000,
+    })], ['screen']));
+    await broadcast('demo', rules);
+    expect(send).toHaveBeenCalledExactlyOnceWith('screen', { type: 'board', board: {
+      officeId: 'demo', calling: [], serving: [], waitingCount: 0, upNext: [], serverTime: nowMs, rules,
+    } });
+    expect(removeTicketConnection).not.toHaveBeenCalled();
+  });
+
   it('removes exactly gone ticket and screen connections while all other recipients still receive', async () => {
     vi.mocked(loadOffice).mockResolvedValue(snapshot([ticket(1), ticket(2)], ['gone-screen', 'live-screen']));
     vi.mocked(send).mockImplementation(id => Promise.resolve(id === 'phone-1' || id === 'gone-screen' ? 'gone' : 'sent'));
