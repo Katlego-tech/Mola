@@ -13,10 +13,11 @@ export function positions(line: Ticket[]): Map<number, number> {
 }
 
 /** New queueKey for a missed ticket. `line` is the waiting line without that ticket; `currentKey`
- *  is the missed ticket's own queueKey, returned unchanged when `line` is empty. Throws if places < 1. */
+ *  is the missed ticket's own queueKey, returned unchanged when `line` is empty.
+ *  Throws RangeError unless places is a whole number >= 1. */
 export function dropBackKey(line: Ticket[], places: number, ticketCounter: number, currentKey: number): number {
-  if (places < 1) {
-    throw new RangeError('places must be at least 1');
+  if (!Number.isInteger(places) || places < 1) {
+    throw new RangeError('places must be a whole number at least 1');
   }
 
   const last = line.at(-1);
