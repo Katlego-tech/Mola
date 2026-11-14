@@ -95,8 +95,25 @@ describe('dropBackKey', () => {
     expect(dropBackKey([ticket(43, { queueKey: 48.5 })], 3, 48, 42)).toBe(49);
   });
 
-  it.each([0, -1, 0.5])('throws when places is %s, including for an empty line', (places) => {
-    expect(() => dropBackKey([ticket(43)], places, 48, 42)).toThrow();
-    expect(() => dropBackKey([], places, 48, 42)).toThrow();
+  it('averages queue keys independently of ticket numbers', () => {
+    const line = [1, 2, 3, 4].map((ticketNo) => ticket(ticketNo, { queueKey: ticketNo * 10 }));
+    expect(dropBackKey(line, 1, 4, 0)).toBe(15);
+  });
+
+  it('places a second drop inside an existing fractional gap', () => {
+    const line = [43, 44, 45, 46, 47, 48].map((ticketNo) => ticket(ticketNo));
+    const firstKey = dropBackKey(line, 3, 48, 42);
+    const secondLine = [ticket(42, { queueKey: firstKey }), ticket(46)];
+
+    expect(firstKey).toBe(45.5);
+    expect(dropBackKey(secondLine, 1, 48, 41)).toBe(45.75);
+  });
+
+  it.each([0, -1, 0.5, 1.5, NaN])('throws RangeError when places is %s on a non-empty line', (places) => {
+    expect(() => dropBackKey([ticket(43), ticket(44)], places, 48, 42)).toThrow(RangeError);
+  });
+
+  it.each([0, -1, 0.5, 1.5, NaN])('throws RangeError when places is %s on an empty line', (places) => {
+    expect(() => dropBackKey([], places, 48, 42)).toThrow(RangeError);
   });
 });
