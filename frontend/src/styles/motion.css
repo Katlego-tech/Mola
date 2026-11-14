@@ -1,0 +1,19 @@
+/* Line-mask entrance from the motion-kit skill (motion.css, "hero lines"), as keyframes so it
+   replays whenever React remounts the element for a new value (key={value}). The resting state is
+   fully visible: nothing is hidden unless the visitor accepts motion. Tokens as in the kit. */
+:root {
+  --m-ease: cubic-bezier(0.16, 1, 0.3, 1);
+  --m-ease-inout: cubic-bezier(0.65, 0, 0.35, 1);
+}
+
+.m-ln { display: block; overflow: hidden; }
+.m-ln > span { display: block; }
+
+@media (prefers-reduced-motion: no-preference) {
+  .m-ln > span { animation: m-rise 0.85s var(--m-ease) both; animation-delay: calc(var(--li, 0) * 90ms); }
+  .m-shift { transition: transform 0.3s var(--m-ease); }
+  .m-panel { animation: m-panel 0.42s var(--m-ease-inout) both; }
+}
+
+@keyframes m-rise { from { transform: translateY(106%); } to { transform: none; } }
+@keyframes m-panel { from { transform: translateY(100%); } to { transform: none; } }
