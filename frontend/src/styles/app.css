@@ -1,0 +1,95 @@
+/* Mola tokens: value for value from docs/design/mockups/tokens.css (web.md 6.1). */
+@import 'tailwindcss';
+@import '@fontsource-variable/archivo/standard.css';
+@import '@fontsource/atkinson-hyperlegible-next/400.css';
+@import '@fontsource/atkinson-hyperlegible-next/600.css';
+@import '@fontsource/atkinson-hyperlegible-next/700.css';
+@import '@fontsource/atkinson-hyperlegible-mono/500.css';
+@import '@fontsource/atkinson-hyperlegible-mono/700.css';
+@import './motion.css';
+
+:root {
+  color-scheme: light;
+  --ground: #f2f0f5;
+  --surface: #fdfcfe;
+  --ticket: #ffd9df;
+  --ticket-deep: #f4b8c3;
+  --ink: #1b1530;
+  --text: #1b1530;
+  --muted: #5e5672;
+  --line: #d9d4e2;
+  --go: #08724b;
+  --go-ink: #fdfcfe;
+  --primary: #1b1530;
+  --primary-ink: #ffd9df;
+  --shadow: 0 1px 0 rgb(27 21 48 / 0.06), 0 12px 32px -12px rgb(27 21 48 / 0.22);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    color-scheme: dark;
+    --ground: #15111f;
+    --surface: #221c33;
+    --ticket: #f6cbd3;
+    --ticket-deep: #d99aa8;
+    --text: #ece8f3;
+    --muted: #a8a0bb;
+    --line: #2f2843;
+    --go: #0b8a5c;
+    --primary: #f6cbd3;
+    --primary-ink: #1b1530;
+    --shadow: 0 1px 0 rgb(0 0 0 / 0.3), 0 16px 40px -16px rgb(0 0 0 / 0.6);
+  }
+}
+/* The counter screen is locked to dark (web.md 6.1): a TV in a waiting room has no one to choose. */
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --ground: #15111f;
+  --surface: #221c33;
+  --ticket: #f6cbd3;
+  --ticket-deep: #d99aa8;
+  --text: #ece8f3;
+  --muted: #a8a0bb;
+  --line: #2f2843;
+  --go: #0b8a5c;
+  --primary: #f6cbd3;
+  --primary-ink: #1b1530;
+  --shadow: 0 1px 0 rgb(0 0 0 / 0.3), 0 16px 40px -16px rgb(0 0 0 / 0.6);
+}
+
+@theme inline {
+  --color-ground: var(--ground);
+  --color-surface: var(--surface);
+  --color-ticket: var(--ticket);
+  --color-ticket-deep: var(--ticket-deep);
+  --color-ink: var(--ink);
+  --color-text: var(--text);
+  --color-muted: var(--muted);
+  --color-line: var(--line);
+  --color-go: var(--go);
+  --color-go-ink: var(--go-ink);
+  --color-primary: var(--primary);
+  --color-primary-ink: var(--primary-ink);
+  --font-sans: 'Atkinson Hyperlegible Next', system-ui, sans-serif;
+  --font-mono: 'Atkinson Hyperlegible Mono', ui-monospace, monospace;
+  --font-number: 'Archivo Variable', system-ui, sans-serif;
+  --radius-ticket: 14px;
+  --shadow-ticket: var(--shadow);
+  --ease-out-long: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@layer base {
+  html { -webkit-text-size-adjust: 100%; }
+  body { @apply bg-ground font-sans text-text antialiased; font-size: 1.0625rem; line-height: 1.45; }
+  :focus-visible { outline: 3px solid var(--text); outline-offset: 3px; }
+}
+
+@utility num {
+  font-family: var(--font-number);
+  font-variation-settings: 'wdth' 62;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  line-height: 0.82;
+  letter-spacing: -0.01em;
+}
+@utility tabular { font-variant-numeric: tabular-nums; }
