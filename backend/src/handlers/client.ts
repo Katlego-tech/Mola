@@ -1,8 +1,12 @@
-import { rules } from '../lib/config';
-import { getConnection, loadOffice, putScreen } from '../lib/db';
+import { broadcast } from '../lib/broadcast';
+import { rules, ticketLifetimeSeconds } from '../lib/config';
+import { bindTicketConnection, getConnection, loadOffice, nextTicketNo, putScreen, putTicket, setConnectionTicket } from '../lib/db';
 import { parseClientMessage } from '../lib/messages';
+import { ACTIVE } from '../lib/model';
+import { positions, waitingLine } from '../lib/ordering';
 import { OK, replyError } from '../lib/reply';
-import { boardOf } from '../lib/views';
+import { issueSecret, verifySecret } from '../lib/secret';
+import { boardOf, ticketView } from '../lib/views';
 import { send } from '../lib/ws';
 
 export interface ClientEvent {
@@ -27,6 +31,48 @@ export async function handler(event: ClientEvent) {
   }
 
   switch (msg.action) {
+    case 'join': {
+      if (conn.role !== 'patron') {
+        await replyError(connectionId, 'forbidden');
+        return OK;
+      }
+      if (conn.ticketNo !== undefined) {
+        const snapshot = await loadOffice(conn.officeId);
+        if (snapshot.tickets.some(ticket => ticket.ticketNo === conn.ticketNo && ACTIVE.has(ticket.status))) {
+          await replyError(connectionId, 'already_has_ticket');
+          return OK;
+        }
+      }
+      const now = Date.now();
+      const nowIso = new Date(now).toISOString();
+      const ticketNo = await nextTicketNo(conn.officeId, nowIso);
+      const { secret, secretHash } = issueSecret();
+      await putTicket({
+        officeId: conn.officeId, ticketNo, status: 'waiting', queueKey: ticketNo,
+        secretHash, connectionId, misses: 0, createdAt: nowIso,
+        expiresAt: Math.floor(now / 1000) + ticketLifetimeSeconds(),
+      });
+      await setConnectionTicket(connectionId, ticketNo);
+      await send(connectionId, { type: 'ticket', officeId: conn.officeId, ticketNo, secret });
+      await broadcast(conn.officeId, rules());
+      return OK;
+    }
+    case 'resume': {
+      const snapshot = await loadOffice(conn.officeId);
+      const ticket = snapshot.tickets.find(ticket => ticket.ticketNo === msg.ticketNo);
+      if (!ticket || !verifySecret(msg.secret, ticket.secretHash)) {
+        await replyError(connectionId, 'bad_ticket');
+        return OK;
+      }
+      await bindTicketConnection(conn.officeId, msg.ticketNo, connectionId);
+      await setConnectionTicket(connectionId, msg.ticketNo);
+      const now = Date.now();
+      await send(connectionId, {
+        type: 'status', ticket: ticketView(ticket, positions(waitingLine(snapshot.tickets, now / 1000))),
+        board: boardOf(conn.officeId, snapshot, now, rules()),
+      });
+      return OK;
+    }
     case 'watch': {
       if (conn.role !== 'screen') {
         await replyError(connectionId, 'forbidden');
