@@ -127,18 +127,28 @@ describe('callNext', () => {
     expect(sdk.commandCalls(StartExecutionCommand)).toHaveLength(1);
   });
 
-  it.each(['load', 'finish', 'claim', 'revert'] as const)('propagates a nonconditional %s failure', async stage => {
+  it.each(['load', 'finish', 'claim'] as const)('propagates a nonconditional %s failure', async stage => {
     tickets(ticket(1, { status: 'serving', desk: 'Desk 1' }), ticket(2));
     const error = new Error(`${stage} failed`);
     if (stage === 'load') vi.mocked(loadOffice).mockRejectedValue(error);
     if (stage === 'finish') vi.mocked(finishServing).mockRejectedValue(error);
     if (stage === 'claim') vi.mocked(claimTicket).mockRejectedValue(error);
-    if (stage === 'revert') {
-      sdk.on(StartExecutionCommand).rejects(new Error('start failed'));
-      vi.mocked(revertClaim).mockRejectedValue(error);
-    }
     await expect(callNext('demo', 'Desk 1')).rejects.toBe(error);
-    if (stage !== 'revert') expect(sdk.calls()).toHaveLength(0);
+    expect(sdk.calls()).toHaveLength(0);
+  });
+
+  it('logs a nonconditional revert failure and preserves the start error', async () => {
+    tickets(ticket(1), ticket(2));
+    const startError = new Error('start failed');
+    const revertError = new Error('revert failed');
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    sdk.on(StartExecutionCommand).rejects(startError);
+    vi.mocked(revertClaim).mockRejectedValue(revertError);
+    await expect(callNext('demo', 'Desk 1')).rejects.toBe(startError);
+    expect(log).toHaveBeenCalledExactlyOnceWith('callNext: revert failed', 'demo', 1, revertError);
+    expect(revertClaim).toHaveBeenCalledExactlyOnceWith('demo', 1);
+    expect(claimTicket).toHaveBeenCalledTimes(1);
+    expect(sdk.commandCalls(StartExecutionCommand)).toHaveLength(1);
   });
 
   it('reads the confirm window from rules on each call', async () => {
