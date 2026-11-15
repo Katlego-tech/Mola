@@ -1,11 +1,12 @@
 import { broadcast } from '../lib/broadcast';
 import { rules, ticketLifetimeSeconds } from '../lib/config';
-import { bindTicketConnection, getConnection, loadOffice, markLeft, nextTicketNo, putScreen, putTicket, setConnectionTicket } from '../lib/db';
+import { bindTicketConnection, getConnection, loadOffice, markLeft, markServing, nextTicketNo, putScreen, putTicket, setConnectionTicket } from '../lib/db';
 import { parseClientMessage } from '../lib/messages';
 import { ACTIVE } from '../lib/model';
 import { positions, waitingLine } from '../lib/ordering';
 import { OK, replyError } from '../lib/reply';
 import { issueSecret, verifySecret } from '../lib/secret';
+import { succeedTask } from '../lib/sfn';
 import { boardOf, ticketView } from '../lib/views';
 import { send } from '../lib/ws';
 
@@ -82,6 +83,39 @@ export async function handler(event: ClientEvent) {
       });
       return OK;
     }
+    case 'confirm': {
+      const snapshot = await loadOffice(conn.officeId);
+      const ticket = snapshot.tickets.find(ticket => ticket.ticketNo === msg.ticketNo);
+      if (!ticket || !verifySecret(msg.secret, ticket.secretHash)) {
+        await replyError(connectionId, 'bad_ticket');
+        return OK;
+      }
+      const now = Date.now();
+      if (ticket.status !== 'called' || !ticket.taskToken) {
+        if ((ticket.status === 'waiting' || ticket.status === 'no_show') && ticket.misses > 0) {
+          await send(connectionId, { type: 'notice', code: 'too_late', ticketNo: msg.ticketNo });
+          await send(connectionId, {
+            type: 'status', ticket: ticketView(ticket, positions(waitingLine(snapshot.tickets, now / 1000))),
+            board: boardOf(conn.officeId, snapshot, now, rules()),
+          });
+        } else {
+          await replyError(connectionId, 'not_called');
+        }
+        return OK;
+      }
+      const nowIso = new Date(now).toISOString();
+      if (await succeedTask(ticket.taskToken, { confirmedAt: nowIso }) === 'dead') {
+        await send(connectionId, { type: 'notice', code: 'too_late', ticketNo: msg.ticketNo });
+        return OK;
+      }
+      try {
+        await markServing(conn.officeId, msg.ticketNo, nowIso);
+      } catch (error) {
+        if (!(error instanceof Error && error.name === 'ConditionalCheckFailedException')) throw error;
+      }
+      await broadcast(conn.officeId, rules());
+      return OK;
+    }
     case 'watch': {
       if (conn.role !== 'screen') {
         await replyError(connectionId, 'forbidden');
@@ -95,7 +129,7 @@ export async function handler(event: ClientEvent) {
     case 'ping':
       return OK;
     default:
-      // join, resume, confirm, leave and callNext get their own routes in later tasks. Until a
+      // leave and callNext get their own routes in later tasks. Until a
       // route exists API Gateway delivers them here, and the API really has no such action yet.
       await replyError(connectionId, 'unknown_action');
       return OK;
