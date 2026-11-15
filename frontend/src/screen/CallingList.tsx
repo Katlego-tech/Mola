@@ -9,14 +9,15 @@ function CallingRow({ call, board, receivedAt, now }: { call: Calling; board: Bo
   const windowMs = board.rules.confirmWindowSeconds * 1000;
   const left = call.deadline === null ? null : remainingMs(call.deadline, board.serverTime, receivedAt, now);
   return (
-    <li className="grid grid-cols-[30vh_auto_1fr] items-center gap-[3vw] border-b-2 border-line pt-[2.2vh] pb-[2.6vh] last:border-b-0">
+    <li aria-label={`Ticket ${call.ticketNo}, ${call.desk}`} className="grid grid-cols-[30vh_auto_1fr] items-center gap-[3vw] border-b-2 border-line pt-[2.2vh] pb-[2.6vh] last:border-b-0">
       <span className="m-ln num text-[22vh] text-ticket">
         <span key={call.ticketNo}>{call.ticketNo}</span>
       </span>
       <ArrowRight weight="bold" className="size-[7vh] text-muted" aria-hidden />
       <div className="grid gap-[1.4vh]">
         <span className="text-[8vh] leading-none font-bold">{call.desk}</span>
-        <span className="font-mono text-[2.6vh] text-muted">
+        {/* The countdown changes four times a second: keep it out of the live region. */}
+        <span className="font-mono text-[2.6vh] text-muted" aria-hidden={left !== null}>
           {left === null ? 'Calling now' : `${mmss(left)} left to confirm`}
         </span>
         {left !== null && (

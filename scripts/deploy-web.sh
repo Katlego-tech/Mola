@@ -16,6 +16,7 @@ output() {
 }
 ws_url="$(output WebSocketUrl)"
 site="$(output WebsiteUrl)"
+site="${site%/}"
 bucket="$(output WebBucketName)"
 distribution="$(output DistributionId)"
 for v in ws_url site bucket distribution; do
@@ -25,10 +26,11 @@ done
 cd "$root/frontend"
 VITE_WS_URL="$ws_url" VITE_APP_URL="$site" npm run build
 
-# Hashed assets never change: cache them for a year. index.html must always be revalidated.
+# Hashed assets never change: cache them for a year. index.html must always be revalidated, and
+# "/*" also refreshes /screen, which CloudFront answers from index.html through an error response.
 aws_ s3 sync dist "s3://$bucket" --delete --exclude index.html \
   --cache-control "public, max-age=31536000, immutable"
 aws_ s3 cp dist/index.html "s3://$bucket/index.html" --cache-control "no-cache"
-aws_ cloudfront create-invalidation --distribution-id "$distribution" --paths "/index.html" >/dev/null
+aws_ cloudfront create-invalidation --distribution-id "$distribution" --paths "/*" >/dev/null
 
 echo "Published $site  (screen: $site/screen?office=demo)"
