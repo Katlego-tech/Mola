@@ -369,7 +369,9 @@ Resources:
   CalledTicketLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
-      LogGroupName: !Sub /mola/${AWS::StackName}/called-ticket
+      # The /aws/vendedlogs/states prefix stops Step Functions adding a CloudWatch Logs resource
+      # policy per deploy (those are capped per region).
+      LogGroupName: !Sub /aws/vendedlogs/states/${AWS::StackName}-called-ticket
       RetentionInDays: 14
   CalledTicketStateMachine:
     Type: AWS::Serverless::StateMachine
