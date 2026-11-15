@@ -93,3 +93,21 @@
   letter-spacing: -0.01em;
 }
 @utility tabular { font-variant-numeric: tabular-nums; }
+
+/* The ticket stub (web.md 6.2): notches cut where the perforation runs, drawn in the page ground. */
+@utility perf {
+  position: relative;
+  border-top: 2px dashed var(--ticket-deep);
+  margin-inline: 18px;
+  &::before, &::after {
+    content: '';
+    position: absolute;
+    top: -13px;
+    width: 24px;
+    height: 24px;
+    border-radius: 9999px;
+    background: var(--ground);
+  }
+  &::before { left: -30px; }
+  &::after { right: -30px; }
+}
