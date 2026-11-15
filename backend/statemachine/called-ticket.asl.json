@@ -1,0 +1,52 @@
+{
+  "Comment": "One execution per called ticket: wait for the confirm tap, or move the queue on (call-flow.md 5, 6).",
+  "QueryLanguage": "JSONata",
+  "StartAt": "NotifyAndWait",
+  "States": {
+    "NotifyAndWait": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke.waitForTaskToken",
+      "Arguments": {
+        "FunctionName": "${NotifyCalledFunctionArn}",
+        "Payload": "{% $merge([$states.input, {'taskToken': $states.context.Task.Token}]) %}"
+      },
+      "TimeoutSeconds": "{% $states.input.confirmWindowSeconds %}",
+      "Retry": [
+        {
+          "ErrorEquals": ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException", "Lambda.TooManyRequestsException"],
+          "IntervalSeconds": 1,
+          "MaxAttempts": 3,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        { "ErrorEquals": ["States.Timeout"], "Next": "Missed", "Output": "{% $states.input %}" },
+        { "ErrorEquals": ["Patron.Left"], "Next": "Advance", "Output": "{% $states.input %}" },
+        { "ErrorEquals": ["States.ALL"], "Next": "Recover", "Output": "{% $states.input %}" }
+      ],
+      "Next": "Confirmed"
+    },
+    "Confirmed": { "Type": "Succeed" },
+    "Missed": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Arguments": { "FunctionName": "${MissedTurnFunctionArn}", "Payload": "{% $merge([$states.input, {'reason': 'timeout'}]) %}" },
+      "Retry": [{ "ErrorEquals": ["States.TaskFailed"], "IntervalSeconds": 1, "MaxAttempts": 3, "BackoffRate": 2 }],
+      "End": true
+    },
+    "Advance": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Arguments": { "FunctionName": "${MissedTurnFunctionArn}", "Payload": "{% $merge([$states.input, {'reason': 'left'}]) %}" },
+      "Retry": [{ "ErrorEquals": ["States.TaskFailed"], "IntervalSeconds": 1, "MaxAttempts": 3, "BackoffRate": 2 }],
+      "End": true
+    },
+    "Recover": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Arguments": { "FunctionName": "${MissedTurnFunctionArn}", "Payload": "{% $merge([$states.input, {'reason': 'error'}]) %}" },
+      "Retry": [{ "ErrorEquals": ["States.TaskFailed"], "IntervalSeconds": 1, "MaxAttempts": 3, "BackoffRate": 2 }],
+      "End": true
+    }
+  }
+}

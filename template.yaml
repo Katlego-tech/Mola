@@ -25,6 +25,18 @@ Parameters:
     MinValue: 1
     MaxValue: 24
     Description: After this a ticket is treated as gone, which clears yesterday's queue.
+  StaffKeyHash:
+    Type: String
+    NoEcho: true
+    AllowedPattern: '^[0-9a-f]{64}$'
+    Description: SHA-256 (hex) of the staff key. The key itself never enters the stack.
+  AlarmEmail:
+    Type: String
+    Default: ''
+    Description: Optional address told when a called-ticket execution fails.
+
+Conditions:
+  HasAlarmEmail: !Not [!Equals [!Ref AlarmEmail, '']]
 
 Globals:
   Function:
@@ -85,6 +97,13 @@ Resources:
       IntegrationType: AWS_PROXY
       IntegrationUri: !Sub arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ClientFunction.Arn}/invocations
 
+  StaffIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref WebSocketApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${StaffFunction.Arn}/invocations
+
   ConnectRoute:
     Type: AWS::ApiGatewayV2::Route
     Properties:
@@ -121,6 +140,18 @@ Resources:
       ApiId: !Ref WebSocketApi
       RouteKey: resume
       Target: !Sub integrations/${ClientIntegration}
+  ConfirmRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref WebSocketApi
+      RouteKey: confirm
+      Target: !Sub integrations/${ClientIntegration}
+  CallNextRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref WebSocketApi
+      RouteKey: callNext
+      Target: !Sub integrations/${StaffIntegration}
   DefaultRoute:
     Type: AWS::ApiGatewayV2::Route
     Properties:
@@ -130,7 +161,7 @@ Resources:
 
   ProdStage:
     Type: AWS::ApiGatewayV2::Stage
-    DependsOn: [ConnectRoute, DisconnectRoute, WatchRoute, PingRoute, JoinRoute, ResumeRoute, DefaultRoute]
+    DependsOn: [ConnectRoute, DisconnectRoute, WatchRoute, PingRoute, JoinRoute, ResumeRoute, ConfirmRoute, CallNextRoute, DefaultRoute]
     Properties:
       ApiId: !Ref WebSocketApi
       StageName: prod
@@ -151,6 +182,14 @@ Resources:
     Properties:
       Action: lambda:InvokeFunction
       FunctionName: !Ref ClientFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${WebSocketApi}/*
+
+  StaffInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref StaffFunction
       Principal: apigateway.amazonaws.com
       SourceArn: !Sub arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${WebSocketApi}/*
 
@@ -201,6 +240,11 @@ Resources:
             - Effect: Allow
               Action: execute-api:ManageConnections
               Resource: !Sub arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${WebSocketApi}/prod/POST/@connections/*
+            # SendTaskSuccess/Failure accept no resource type (Service Authorization Reference), so
+            # they cannot be scoped; the task token itself is the capability (infra.md 6.2).
+            - Effect: Allow
+              Action: [states:SendTaskSuccess, states:SendTaskFailure]
+              Resource: '*'
     Metadata:
       BuildMethod: esbuild
       BuildProperties:
@@ -213,6 +257,168 @@ Resources:
         Banner:
           - "js=import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);"
         EntryPoints: [src/handlers/client.ts]
+
+
+  StaffLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /mola/${AWS::StackName}/staff
+      RetentionInDays: 14
+  StaffFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: staff.handler
+      LoggingConfig: { LogFormat: JSON, LogGroup: !Ref StaffLogGroup }
+      Environment:
+        Variables:
+          STAFF_KEY_SHA256: !Ref StaffKeyHash
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: [dynamodb:GetItem, dynamodb:Query, dynamodb:UpdateItem, dynamodb:DeleteItem]
+              Resource: !GetAtt MolaTable.Arn
+            - Effect: Allow
+              Action: execute-api:ManageConnections
+              Resource: !Sub arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${WebSocketApi}/prod/POST/@connections/*
+            - Effect: Allow
+              Action: states:StartExecution
+              Resource: !Sub arn:${AWS::Partition}:states:${AWS::Region}:${AWS::AccountId}:stateMachine:${AWS::StackName}-called-ticket
+
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Format: esm
+        Target: node24
+        Minify: true
+        Sourcemap: true
+        OutExtension: [.js=.mjs]
+        Banner:
+          - "js=import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);"
+        EntryPoints: [src/handlers/staff.ts]
+
+  NotifyCalledLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /mola/${AWS::StackName}/notify-called
+      RetentionInDays: 14
+  NotifyCalledFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: notify-called.handler
+      LoggingConfig: { LogFormat: JSON, LogGroup: !Ref NotifyCalledLogGroup }
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: [dynamodb:Query, dynamodb:UpdateItem, dynamodb:DeleteItem]
+              Resource: !GetAtt MolaTable.Arn
+            - Effect: Allow
+              Action: execute-api:ManageConnections
+              Resource: !Sub arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${WebSocketApi}/prod/POST/@connections/*
+            - Effect: Allow
+              Action: states:SendTaskFailure
+              Resource: '*'
+
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Format: esm
+        Target: node24
+        Minify: true
+        Sourcemap: true
+        OutExtension: [.js=.mjs]
+        Banner:
+          - "js=import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);"
+        EntryPoints: [src/handlers/notify-called.ts]
+
+  MissedTurnLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /mola/${AWS::StackName}/missed-turn
+      RetentionInDays: 14
+  MissedTurnFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: missed-turn.handler
+      LoggingConfig: { LogFormat: JSON, LogGroup: !Ref MissedTurnLogGroup }
+      Timeout: 30
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: [dynamodb:Query, dynamodb:UpdateItem, dynamodb:DeleteItem]
+              Resource: !GetAtt MolaTable.Arn
+            - Effect: Allow
+              Action: execute-api:ManageConnections
+              Resource: !Sub arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${WebSocketApi}/prod/POST/@connections/*
+            - Effect: Allow
+              Action: states:StartExecution
+              Resource: !Sub arn:${AWS::Partition}:states:${AWS::Region}:${AWS::AccountId}:stateMachine:${AWS::StackName}-called-ticket
+
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Format: esm
+        Target: node24
+        Minify: true
+        Sourcemap: true
+        OutExtension: [.js=.mjs]
+        Banner:
+          - "js=import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);"
+        EntryPoints: [src/handlers/missed-turn.ts]
+
+  # ------------------------------------------------------------ call flow ----
+  CalledTicketLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /mola/${AWS::StackName}/called-ticket
+      RetentionInDays: 14
+  CalledTicketStateMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Name: !Sub ${AWS::StackName}-called-ticket
+      Type: STANDARD
+      DefinitionUri: backend/statemachine/called-ticket.asl.json
+      DefinitionSubstitutions:
+        NotifyCalledFunctionArn: !GetAtt NotifyCalledFunction.Arn
+        MissedTurnFunctionArn: !GetAtt MissedTurnFunction.Arn
+      Logging:
+        Level: ERROR
+        IncludeExecutionData: false
+        Destinations:
+          - CloudWatchLogsLogGroup: { LogGroupArn: !GetAtt CalledTicketLogGroup.Arn }
+      Policies:
+        - LambdaInvokePolicy: { FunctionName: !Ref NotifyCalledFunction }
+        - LambdaInvokePolicy: { FunctionName: !Ref MissedTurnFunction }
+        # Step Functions log delivery needs these account-level actions (no resource scoping exists).
+        - Statement:
+            - Effect: Allow
+              Action: [logs:CreateLogDelivery, logs:GetLogDelivery, logs:UpdateLogDelivery, logs:DeleteLogDelivery, logs:ListLogDeliveries, logs:PutResourcePolicy, logs:DescribeResourcePolicies, logs:DescribeLogGroups]
+              Resource: '*'
+
+  AlarmTopic:
+    Type: AWS::SNS::Topic
+    Condition: HasAlarmEmail
+  AlarmSubscription:
+    Type: AWS::SNS::Subscription
+    Condition: HasAlarmEmail
+    Properties:
+      TopicArn: !Ref AlarmTopic
+      Protocol: email
+      Endpoint: !Ref AlarmEmail
+  ExecutionsFailedAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: A called-ticket execution failed; a ticket may be stuck as called.
+      Namespace: AWS/States
+      MetricName: ExecutionsFailed
+      Dimensions:
+        - { Name: StateMachineArn, Value: !Ref CalledTicketStateMachine }
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: !If [HasAlarmEmail, [!Ref AlarmTopic], !Ref AWS::NoValue]
 
   # ------------------------------------------------------------------- web ----
   WebBucket:

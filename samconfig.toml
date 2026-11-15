@@ -14,6 +14,7 @@ capabilities = "CAPABILITY_IAM"
 resolve_s3 = true
 confirm_changeset = false
 parameter_overrides = "ConfirmWindowSeconds=30 DropBackPlaces=3 MaxMisses=2 TicketLifetimeHours=12"
+# StaffKeyHash is passed on the command line once, then reused: --parameter-overrides StaffKeyHash=<sha256>
 
 [demo.global.parameters]
 stack_name = "mola-demo"
