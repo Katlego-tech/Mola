@@ -101,7 +101,7 @@ export async function claimTicket(officeId: string, ticketNo: number, desk: stri
 export async function revertClaim(officeId: string, ticketNo: number): Promise<void> {
   await ddb.send(new UpdateCommand({
     TableName: TABLE(), Key: { pk: officePk(officeId), sk: ticketSk(ticketNo) },
-    UpdateExpression: 'SET #s = :waiting REMOVE desk, calledAt',
+    UpdateExpression: 'SET #s = :waiting REMOVE desk, calledAt, taskToken, deadline',
     ConditionExpression: '#s = :called',
     ExpressionAttributeNames: { '#s': 'status' },
     ExpressionAttributeValues: { ':waiting': 'waiting', ':called': 'called' },

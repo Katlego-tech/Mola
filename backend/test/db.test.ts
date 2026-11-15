@@ -84,7 +84,7 @@ const writes = [
     input: { Key: ticketKey, UpdateExpression: 'SET #s = :called, desk = :d, calledAt = :t', ConditionExpression: '#s = :waiting',
       ExpressionAttributeValues: { ':called': 'called', ':d': 'Desk 1', ':t': iso, ':waiting': 'waiting' }, ExpressionAttributeNames: { '#s': 'status' } } },
   { name: 'revertClaim', run: () => db.revertClaim('demo', 42), command: UpdateCommand,
-    input: { Key: ticketKey, UpdateExpression: 'SET #s = :waiting REMOVE desk, calledAt', ConditionExpression: '#s = :called',
+    input: { Key: ticketKey, UpdateExpression: 'SET #s = :waiting REMOVE desk, calledAt, taskToken, deadline', ConditionExpression: '#s = :called',
       ExpressionAttributeValues: { ':waiting': 'waiting', ':called': 'called' }, ExpressionAttributeNames: { '#s': 'status' } } },
   { name: 'storeTaskToken', run: () => db.storeTaskToken('demo', 42, 'token', 1234), command: UpdateCommand,
     input: { Key: ticketKey, UpdateExpression: 'SET taskToken = :tk, deadline = :dl', ConditionExpression: '#s = :called',
