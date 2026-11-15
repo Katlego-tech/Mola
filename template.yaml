@@ -109,6 +109,18 @@ Resources:
       ApiId: !Ref WebSocketApi
       RouteKey: ping
       Target: !Sub integrations/${ClientIntegration}
+  JoinRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref WebSocketApi
+      RouteKey: join
+      Target: !Sub integrations/${ClientIntegration}
+  ResumeRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref WebSocketApi
+      RouteKey: resume
+      Target: !Sub integrations/${ClientIntegration}
   DefaultRoute:
     Type: AWS::ApiGatewayV2::Route
     Properties:
@@ -118,7 +130,7 @@ Resources:
 
   ProdStage:
     Type: AWS::ApiGatewayV2::Stage
-    DependsOn: [ConnectRoute, DisconnectRoute, WatchRoute, PingRoute, DefaultRoute]
+    DependsOn: [ConnectRoute, DisconnectRoute, WatchRoute, PingRoute, JoinRoute, ResumeRoute, DefaultRoute]
     Properties:
       ApiId: !Ref WebSocketApi
       StageName: prod
