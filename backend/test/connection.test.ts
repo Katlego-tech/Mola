@@ -68,6 +68,12 @@ describe('$disconnect', () => {
     expect(await handler(event('$disconnect'))).toEqual({ statusCode: 200 });
   });
 
+  it('still deletes the connection when reading it fails', async () => {
+    db.getConnection.mockRejectedValue(Object.assign(new Error('slow down'), { name: 'ProvisionedThroughputExceededException' }));
+    expect(await handler(event('$disconnect'))).toEqual({ statusCode: 200 });
+    expect(db.deleteConnection).toHaveBeenCalledWith('c-1');
+  });
+
   it('answers 200 for a connection that was never stored', async () => {
     db.getConnection.mockResolvedValue(null);
     expect(await handler(event('$disconnect'))).toEqual({ statusCode: 200 });
