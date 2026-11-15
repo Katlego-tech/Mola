@@ -10,6 +10,7 @@ const db = vi.hoisted(() => ({
   putTicket: vi.fn<(ticket: Ticket) => Promise<void>>(),
   setConnectionTicket: vi.fn<(id: string, ticketNo: number) => Promise<void>>(),
   bindTicketConnection: vi.fn<(officeId: string, ticketNo: number, id: string) => Promise<void>>(),
+  markLeft: vi.fn<(officeId: string, ticketNo: number, from: 'waiting' | 'called', closedAtIso: string) => Promise<void>>(),
 }));
 const ws = vi.hoisted(() => ({ send: vi.fn<(id: string, message: ServerMessage) => Promise<'sent' | 'gone'>>() }));
 const fanout = vi.hoisted(() => ({ broadcast: vi.fn() }));
@@ -40,6 +41,7 @@ const expectNoWrites = () => {
   expect(db.putTicket).not.toHaveBeenCalled();
   expect(db.setConnectionTicket).not.toHaveBeenCalled();
   expect(db.bindTicketConnection).not.toHaveBeenCalled();
+  expect(db.markLeft).not.toHaveBeenCalled();
   expect(fanout.broadcast).not.toHaveBeenCalled();
 };
 
@@ -83,6 +85,43 @@ describe('join', () => {
     expect(db.putTicket).toHaveBeenCalledBefore(db.setConnectionTicket);
     expect(db.setConnectionTicket).toHaveBeenCalledBefore(ws.send);
     expect(ws.send).toHaveBeenCalledBefore(fanout.broadcast);
+    expect(db.markLeft).not.toHaveBeenCalled();
+  });
+
+  it('closes the waiting ticket when its secret delivery returns gone, then broadcasts', async () => {
+    ws.send.mockResolvedValue('gone');
+    expect(await handler(event('join'))).toEqual({ statusCode: 200 });
+    expect(db.markLeft).toHaveBeenCalledExactlyOnceWith('demo', 42, 'waiting', new Date(now).toISOString());
+    expect(fanout.broadcast).toHaveBeenCalledExactlyOnceWith('demo', officeRules);
+    expect(ws.send).toHaveBeenCalledBefore(db.markLeft);
+    expect(db.markLeft).toHaveBeenCalledBefore(fanout.broadcast);
+  });
+
+  it('broadcasts before rethrowing a secret delivery error', async () => {
+    const error = new Error('Delivery failed');
+    ws.send.mockRejectedValue(error);
+    await expect(handler(event('join'))).rejects.toBe(error);
+    expect(fanout.broadcast).toHaveBeenCalledExactlyOnceWith('demo', officeRules);
+    expect(ws.send).toHaveBeenCalledBefore(fanout.broadcast);
+    expect(db.markLeft).not.toHaveBeenCalled();
+  });
+
+  it('ignores a conditional failure closing an undelivered ticket and still broadcasts', async () => {
+    ws.send.mockResolvedValue('gone');
+    db.markLeft.mockRejectedValue(Object.assign(new Error('Ticket already changed'), { name: 'ConditionalCheckFailedException' }));
+    expect(await handler(event('join'))).toEqual({ statusCode: 200 });
+    expect(db.markLeft).toHaveBeenCalledExactlyOnceWith('demo', 42, 'waiting', new Date(now).toISOString());
+    expect(fanout.broadcast).toHaveBeenCalledExactlyOnceWith('demo', officeRules);
+    expect(db.markLeft).toHaveBeenCalledBefore(fanout.broadcast);
+  });
+
+  it('propagates other closing failures after broadcasting', async () => {
+    const error = new Error('Write failed');
+    ws.send.mockResolvedValue('gone');
+    db.markLeft.mockRejectedValue(error);
+    await expect(handler(event('join'))).rejects.toBe(error);
+    expect(fanout.broadcast).toHaveBeenCalledExactlyOnceWith('demo', officeRules);
+    expect(db.markLeft).toHaveBeenCalledBefore(fanout.broadcast);
   });
 
   it('gives concurrent joins on separate connections different counter numbers', async () => {
@@ -164,13 +203,25 @@ describe('resume', () => {
     expectNoWrites();
   });
 
-  it.each(['missing', 'expired'])('refuses a %s ticket without writing', async reason => {
+  it('uses queue order for the resumed ticket position', async () => {
     const secret = randomUUID();
-    const storedTickets = reason === 'expired'
-      ? [ticket({ secretHash: createHash('sha256').update(secret).digest('hex'), expiresAt: Math.floor(now / 1000) })]
-      : [];
-    // loadOffice's contract removes expired items even before DynamoDB TTL deletes them.
-    db.loadOffice.mockResolvedValue(snapshot(storedTickets.filter(t => t.expiresAt > now / 1000)));
+    db.loadOffice.mockResolvedValue(snapshot([
+      ticket({ ticketNo: 40, queueKey: 3 }),
+      ticket({ ticketNo: 41, queueKey: 1 }),
+      ticket({ ticketNo: 42, queueKey: 2, secretHash: createHash('sha256').update(secret).digest('hex') }),
+    ]));
+    await handler(event('resume', 'c-9', secret));
+    expect(ws.send).toHaveBeenCalledExactlyOnceWith('c-9', expect.objectContaining({
+      type: 'status',
+      ticket: expect.objectContaining({ ticketNo: 42, position: 2 }),
+      board: expect.objectContaining({ waitingCount: 3, upNext: [41, 42, 40] }),
+    }));
+    expect(fanout.broadcast).not.toHaveBeenCalled();
+  });
+
+  it('refuses a missing ticket without writing', async () => {
+    const secret = randomUUID();
+    db.loadOffice.mockResolvedValue(snapshot());
     await handler(event('resume', 'c-9', secret));
     expect(ws.send).toHaveBeenCalledExactlyOnceWith('c-9', expect.objectContaining({ type: 'error', code: 'bad_ticket' }));
     expectNoWrites();
