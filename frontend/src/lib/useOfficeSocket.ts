@@ -12,8 +12,10 @@ export function useOfficeSocket(
   officeId: string,
   role: 'patron' | 'screen',
   handlers: { onMessage(msg: ServerMessage): void; onOpen(send: Send): void },
-): { state: SocketState; send: Send } {
+): { state: SocketState; send: Send; reconnect(): void } {
   const [state, setState] = useState<SocketState>('connecting');
+  // Bumping this tears the socket down and opens a fresh one (a half-open connection after sleep).
+  const [generation, setGeneration] = useState(0);
   const handlersRef = useRef(handlers);
   const sendRef = useRef<Send>(() => undefined);
 
@@ -30,7 +32,7 @@ export function useOfficeSocket(
     });
     sendRef.current = socket.send;
     return () => socket.close();
-  }, [officeId, role]);
+  }, [officeId, role, generation]);
 
-  return { state, send: (msg) => sendRef.current(msg) };
+  return { state, send: (msg) => sendRef.current(msg), reconnect: () => setGeneration((g) => g + 1) };
 }
