@@ -23,7 +23,7 @@ beforeEach(() => {
   vi.stubEnv('CONFIRM_WINDOW_SECONDS', '120');
   vi.stubEnv('DROP_BACK_PLACES', '3');
   vi.stubEnv('MAX_MISSES', '2');
-  event = { officeId: 'demo', ticketNo: 42, desk: 'Desk 1', confirmWindowSeconds: 30, taskToken: randomUUID() };
+  event = { officeId: 'demo', ticketNo: 42, desk: 'Desk 1', confirmWindowSeconds: 30, calledAt: '2027-01-01T08:00:00.000Z', taskToken: randomUUID() };
   vi.mocked(storeTaskToken).mockResolvedValue(undefined);
   vi.mocked(broadcast).mockResolvedValue(undefined);
 });
@@ -36,7 +36,7 @@ function lostRace(): ConditionalCheckFailedException {
 describe('NotifyCalled', () => {
   it('stores the token and event-based deadline before broadcasting with current rules', async () => {
     vi.mocked(broadcast).mockImplementation(() => {
-      expect(storeTaskToken).toHaveBeenCalledExactlyOnceWith('demo', 42, event.taskToken, now + 30_000);
+      expect(storeTaskToken).toHaveBeenCalledExactlyOnceWith('demo', 42, event.taskToken, now + 30_000, event.calledAt);
       return Promise.resolve();
     });
     await expect(handler(event)).resolves.toBeUndefined();
