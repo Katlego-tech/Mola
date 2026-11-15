@@ -51,14 +51,29 @@ describe('ping', () => {
   });
 });
 
+describe('ping on $default', () => {
+  it('answers without sending anything', async () => {
+    db.getConnection.mockResolvedValue({ connectionId: 'c-9', officeId: 'demo', role: 'patron', expiresAt: 5 });
+    expect(await handler(event('$default', '{"action":"ping"}'))).toEqual({ statusCode: 200 });
+    expect(ws.send).not.toHaveBeenCalled();
+  });
+});
+
 describe('refusals', () => {
   it('answers a malformed body with bad_request', async () => {
     await handler(event('$default', 'not json'));
     expect(ws.send).toHaveBeenCalledWith('c-9', expect.objectContaining({ type: 'error', code: 'bad_request' }));
   });
 
-  it('answers an unknown action with unknown_action', async () => {
+  it('answers an action the parser does not know with unknown_action', async () => {
     await handler(event('$default', '{"action":"dance"}'));
+    expect(ws.send).toHaveBeenCalledWith('c-9', expect.objectContaining({ type: 'error', code: 'unknown_action' }));
+    expect(db.getConnection).not.toHaveBeenCalled();
+  });
+
+  it('answers a valid action that has no route yet with unknown_action', async () => {
+    db.getConnection.mockResolvedValue({ connectionId: 'c-9', officeId: 'demo', role: 'patron', expiresAt: 5 });
+    await handler(event('$default', '{"action":"join"}'));
     expect(ws.send).toHaveBeenCalledWith('c-9', expect.objectContaining({ type: 'error', code: 'unknown_action' }));
   });
 

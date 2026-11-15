@@ -36,7 +36,11 @@ export async function handler(event: ConnectionEvent) {
   }
 
   // $disconnect is best effort (API Gateway does not guarantee it); TTL cleans up the rest.
-  const conn = await getConnection(connectionId);
+  // A failed read must not skip the rest: the connection item is still deleted below.
+  const conn = await getConnection(connectionId).catch((error: unknown) => {
+    console.warn('disconnect: connection read skipped', error);
+    return null;
+  });
   await bestEffort('connection', () => deleteConnection(connectionId));
   if (conn?.role === 'screen') await bestEffort('screen', () => deleteScreen(conn.officeId, connectionId));
   if (conn?.ticketNo !== undefined) {
