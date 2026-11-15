@@ -42,7 +42,10 @@ export async function handler(event: ClientEvent) {
     }
   } catch (error) {
     console.error('Staff handler failed', error);
-    await replyError(connectionId, 'internal');
+    // Telling the desk is best effort: the handler always answers OK to API Gateway.
+    await replyError(connectionId, 'internal').catch((replyFailure: unknown) => {
+      console.error('Staff handler could not report the failure', replyFailure);
+    });
   }
   return OK;
 }
