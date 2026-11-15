@@ -1,6 +1,6 @@
 import { broadcast } from '../lib/broadcast';
 import { rules, ticketLifetimeSeconds } from '../lib/config';
-import { bindTicketConnection, getConnection, loadOffice, nextTicketNo, putScreen, putTicket, setConnectionTicket } from '../lib/db';
+import { bindTicketConnection, getConnection, loadOffice, markLeft, nextTicketNo, putScreen, putTicket, setConnectionTicket } from '../lib/db';
 import { parseClientMessage } from '../lib/messages';
 import { ACTIVE } from '../lib/model';
 import { positions, waitingLine } from '../lib/ordering';
@@ -53,8 +53,17 @@ export async function handler(event: ClientEvent) {
         expiresAt: Math.floor(now / 1000) + ticketLifetimeSeconds(),
       });
       await setConnectionTicket(connectionId, ticketNo);
-      await send(connectionId, { type: 'ticket', officeId: conn.officeId, ticketNo, secret });
-      await broadcast(conn.officeId, rules());
+      try {
+        if (await send(connectionId, { type: 'ticket', officeId: conn.officeId, ticketNo, secret }) === 'gone') {
+          try {
+            await markLeft(conn.officeId, ticketNo, 'waiting', nowIso);
+          } catch (error) {
+            if (!(error instanceof Error && error.name === 'ConditionalCheckFailedException')) throw error;
+          }
+        }
+      } finally {
+        await broadcast(conn.officeId, rules());
+      }
       return OK;
     }
     case 'resume': {
