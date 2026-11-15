@@ -166,6 +166,9 @@ Resources:
         Minify: true
         Sourcemap: true
         OutExtension: [.js=.mjs]
+        # ESM bundles have no require(); the AWS SDK's CommonJS parts need one at run time.
+        Banner:
+          - "js=import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);"
         EntryPoints: [src/handlers/connection.ts]
 
   ClientLogGroup:
@@ -194,6 +197,9 @@ Resources:
         Minify: true
         Sourcemap: true
         OutExtension: [.js=.mjs]
+        # ESM bundles have no require(); the AWS SDK's CommonJS parts need one at run time.
+        Banner:
+          - "js=import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);"
         EntryPoints: [src/handlers/client.ts]
 
   # ------------------------------------------------------------------- web ----
