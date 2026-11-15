@@ -28,6 +28,8 @@ function PatronSession({ officeId }: { officeId: string }) {
 
   const { state, send, reconnect } = useOfficeSocket(officeId, 'patron', {
     onOpen: (sendNow) => {
+      // A join tapped before a drop never got its answer; let the patron tap again.
+      setJoining(false);
       const own = storedRef.current;
       if (own) sendNow({ action: 'resume', ticketNo: own.ticketNo, secret: own.secret });
     },
@@ -62,7 +64,8 @@ function PatronSession({ officeId }: { officeId: string }) {
     },
   });
 
-  // "It's your turn": buzz and chime once, when the status turns to called.
+  // "It's your turn": buzz and chime once, when the status turns to called. A reload while already
+  // called alerts again on purpose: the patron may have missed the first one.
   const status = view?.ticket.status;
   const previous = useRef(status);
   useEffect(() => {
@@ -73,15 +76,23 @@ function PatronSession({ officeId }: { officeId: string }) {
     previous.current = status;
   }, [status]);
 
-  // Keep the screen awake while a ticket is in play.
+  // Keep the screen awake while a ticket is in play. Browsers drop the lock whenever the page is
+  // hidden, so it is taken again each time the page comes back into view.
   const active = status === 'waiting' || status === 'called' || status === 'serving';
   useEffect(() => {
     if (!active) return;
     let release: (() => void) | null = null;
     let live = true;
-    void holdWakeLock().then((r) => (live ? (release = r) : r?.()));
+    const take = () => {
+      if (document.visibilityState === 'hidden') return;
+      release?.();
+      void holdWakeLock().then((r) => (live ? (release = r) : r?.()));
+    };
+    take();
+    document.addEventListener('visibilitychange', take);
     return () => {
       live = false;
+      document.removeEventListener('visibilitychange', take);
       release?.();
     };
   }, [active]);
