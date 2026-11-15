@@ -15,7 +15,7 @@ vi.mock('../src/lib/db', () => ({
 const sdk = mockClient(SFNClient);
 const now = 1_800_000_000_500;
 const iso = new Date(now).toISOString();
-const input = { officeId: 'demo', ticketNo: 42, desk: 'Desk 1', confirmWindowSeconds: 30 };
+const input = { officeId: 'demo', ticketNo: 42, desk: 'Desk 1', confirmWindowSeconds: 30, calledAt: iso };
 function ticket(ticketNo: number, overrides: Partial<Ticket> = {}): Ticket {
   return {
     officeId: 'demo', ticketNo, status: 'waiting', queueKey: ticketNo,

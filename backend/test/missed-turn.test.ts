@@ -14,8 +14,9 @@ vi.mock('../src/lib/broadcast', () => fanout);
 const { handler } = await import('../src/handlers/missed-turn');
 const now = Date.parse('2027-03-01T08:00:00.123Z');
 const nowIso = new Date(now).toISOString();
+const calledAt = new Date(now - 120000).toISOString();
 const officeRules = { confirmWindowSeconds: 120, dropBackPlaces: 3, maxMisses: 2 };
-const event = (reason: 'timeout' | 'left' | 'error') => ({ officeId: 'demo', ticketNo: 42, desk: 'Desk 2', reason });
+const event = (reason: 'timeout' | 'left' | 'error') => ({ officeId: 'demo', ticketNo: 42, desk: 'Desk 2', calledAt, reason });
 let ticket: Ticket;
 let snapshot: OfficeSnapshot;
 
@@ -27,13 +28,13 @@ beforeEach(() => {
   vi.stubEnv('MAX_MISSES', '2');
   ticket = { officeId: 'demo', ticketNo: 42, status: 'called', queueKey: 42,
     secretHash: randomUUID(), misses: 0, connectionId: 'phone', desk: 'Desk 2',
-    taskToken: randomUUID(), createdAt: nowIso, expiresAt: now / 1000 + 43200 };
+    taskToken: randomUUID(), calledAt, createdAt: nowIso, expiresAt: now / 1000 + 43200 };
   snapshot = { office: { officeId: 'demo', ticketCounter: 48, createdAt: nowIso }, tickets: [ticket], screens: [] };
   db.loadOffice.mockImplementation(() => Promise.resolve(snapshot));
   ws.send.mockResolvedValue('sent');
   calling.callNext.mockResolvedValue({ empty: true });
 });
-afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); });
+afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); vi.unstubAllEnvs(); });
 
 function addWaiting(count: number) {
   for (let i = 1; i <= count; i++) {
@@ -65,7 +66,7 @@ describe('timeout', () => {
     snapshot.tickets.reverse();
     await handler(event('timeout'));
     expect(db.loadOffice).toHaveBeenCalledExactlyOnceWith('demo');
-    expect(db.dropBack).toHaveBeenCalledExactlyOnceWith('demo', 42, 45.5, 1);
+    expect(db.dropBack).toHaveBeenCalledExactlyOnceWith('demo', 42, 45.5, 1, calledAt);
     const dropped = { ...ticket, status: 'waiting' as const, queueKey: 45.5 };
     const line = waitingLine(snapshot.tickets.filter(t => t.ticketNo !== 42).concat(dropped), now / 1000);
     expect(line).toHaveLength(7);
@@ -79,7 +80,7 @@ describe('timeout', () => {
   it.each([0, 1, 3])('drops behind %i remaining tickets using the office counter', async count => {
     addWaiting(count);
     await handler(event('timeout'));
-    expect(db.dropBack).toHaveBeenCalledExactlyOnceWith('demo', 42, count === 0 ? 42 : 48.5, 1);
+    expect(db.dropBack).toHaveBeenCalledExactlyOnceWith('demo', 42, count === 0 ? 42 : 48.5, 1, calledAt);
     expect(ws.send).toHaveBeenCalledExactlyOnceWith('phone', { type: 'notice', code: 'dropped_back', ticketNo: 42, placesBack: count });
     expectAdvance();
   });
@@ -88,20 +89,20 @@ describe('timeout', () => {
     snapshot.office = null;
     addWaiting(1);
     await handler(event('timeout'));
-    expect(db.dropBack).toHaveBeenCalledExactlyOnceWith('demo', 42, 43.5, 1);
+    expect(db.dropBack).toHaveBeenCalledExactlyOnceWith('demo', 42, 43.5, 1, calledAt);
   });
 
   it('allows the miss that reaches MaxMisses', async () => {
     ticket.misses = 1;
     await handler(event('timeout'));
-    expect(db.dropBack).toHaveBeenCalledExactlyOnceWith('demo', 42, 42, 2);
+    expect(db.dropBack).toHaveBeenCalledExactlyOnceWith('demo', 42, 42, 2, calledAt);
     expect(db.markNoShow).not.toHaveBeenCalled();
   });
 
   it('closes as no_show when the ticket already has MaxMisses', async () => {
     ticket.misses = 2;
     await handler(event('timeout'));
-    expect(db.markNoShow).toHaveBeenCalledExactlyOnceWith('demo', 42, 3, nowIso);
+    expect(db.markNoShow).toHaveBeenCalledExactlyOnceWith('demo', 42, 3, nowIso, calledAt);
     expect(db.dropBack).not.toHaveBeenCalled();
     expect(ws.send).toHaveBeenCalledExactlyOnceWith('phone', { type: 'notice', code: 'no_show', ticketNo: 42 });
     expect(db.markNoShow).toHaveBeenCalledBefore(ws.send);
@@ -151,6 +152,28 @@ const paths = [
   { reason: 'error' as const, write: db.revertClaim, misses: 0 },
 ];
 describe('races and failures', () => {
+  it.each(['timeout', 'left', 'error'] as const)('ignores a stale %s execution after the ticket was called again', async reason => {
+    ticket.calledAt = nowIso;
+    await handler(event(reason));
+    expectNoWrites();
+    if (reason === 'error') {
+      expect(calling.callNext).not.toHaveBeenCalled();
+      expectBroadcast();
+    } else expectAdvance();
+  });
+
+  it.each([false, true])('logs a failed notice and continues (no_show=%s)', async noShow => {
+    if (noShow) ticket.misses = 2;
+    const error = new Error('Notice delivery failed');
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    ws.send.mockRejectedValue(error);
+    await handler(event('timeout'));
+    expect(ws.send).toHaveBeenCalledOnce();
+    expect(log).toHaveBeenCalledExactlyOnceWith('MissedTurn notice failed', 'demo', 42, error);
+    expect(ws.send).toHaveBeenCalledBefore(calling.callNext);
+    expectAdvance();
+  });
+
   it.each(paths)('ignores a conditional failure for $reason (misses=$misses)', async ({ reason, write, misses }) => {
     ticket.misses = misses;
     write.mockRejectedValue(Object.assign(new Error('Race lost'), { name: 'ConditionalCheckFailedException' }));
@@ -183,10 +206,9 @@ describe('races and failures', () => {
     });
   }
 
-  it.each(['load', 'send', 'callNext', 'broadcast'])('throws other %s errors', async source => {
+  it.each(['load', 'callNext', 'broadcast'])('throws other %s errors', async source => {
     const error = new Error('Unavailable');
     if (source === 'load') db.loadOffice.mockRejectedValue(error);
-    if (source === 'send') ws.send.mockRejectedValue(error);
     if (source === 'callNext') calling.callNext.mockRejectedValue(error);
     if (source === 'broadcast') fanout.broadcast.mockRejectedValue(error);
     await expect(handler(event('timeout'))).rejects.toBe(error);

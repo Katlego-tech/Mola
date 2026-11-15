@@ -6,6 +6,7 @@ import * as db from '../src/lib/db';
 import type { Connection, Office, Screen, Ticket } from '../src/lib/model';
 
 const mock = mockClient(DynamoDBDocumentClient);
+const taskToken = crypto.randomUUID();
 const iso = '2026-11-14T10:00:00.000Z';
 const office: Office = { officeId: 'demo', ticketCounter: 42, createdAt: iso };
 const ticket: Ticket = { officeId: 'demo', ticketNo: 42, status: 'waiting', queueKey: 42,
@@ -86,21 +87,21 @@ const writes = [
   { name: 'revertClaim', run: () => db.revertClaim('demo', 42), command: UpdateCommand,
     input: { Key: ticketKey, UpdateExpression: 'SET #s = :waiting REMOVE desk, calledAt, taskToken, deadline', ConditionExpression: '#s = :called',
       ExpressionAttributeValues: { ':waiting': 'waiting', ':called': 'called' }, ExpressionAttributeNames: { '#s': 'status' } } },
-  { name: 'storeTaskToken', run: () => db.storeTaskToken('demo', 42, 'token', 1234), command: UpdateCommand,
-    input: { Key: ticketKey, UpdateExpression: 'SET taskToken = :tk, deadline = :dl', ConditionExpression: '#s = :called',
-      ExpressionAttributeValues: { ':tk': 'token', ':dl': 1234, ':called': 'called' }, ExpressionAttributeNames: { '#s': 'status' } } },
+  { name: 'storeTaskToken', run: () => db.storeTaskToken('demo', 42, taskToken, 1234, iso), command: UpdateCommand,
+    input: { Key: ticketKey, UpdateExpression: 'SET taskToken = :tk, deadline = :dl', ConditionExpression: '#s = :called AND calledAt = :c',
+      ExpressionAttributeValues: { ':tk': taskToken, ':dl': 1234, ':called': 'called', ':c': iso }, ExpressionAttributeNames: { '#s': 'status' } } },
   { name: 'markServing', run: () => db.markServing('demo', 42, iso), command: UpdateCommand,
     input: { Key: ticketKey, UpdateExpression: 'SET #s = :serving, servedAt = :t REMOVE taskToken, deadline', ConditionExpression: '#s = :called',
       ExpressionAttributeValues: { ':serving': 'serving', ':t': iso, ':called': 'called' }, ExpressionAttributeNames: { '#s': 'status' } } },
   { name: 'finishServing', run: () => db.finishServing('demo', 42, iso), command: UpdateCommand,
     input: { Key: ticketKey, UpdateExpression: 'SET #s = :done, closedAt = :t', ConditionExpression: '#s = :serving',
       ExpressionAttributeValues: { ':done': 'done', ':t': iso, ':serving': 'serving' }, ExpressionAttributeNames: { '#s': 'status' } } },
-  { name: 'dropBack', run: () => db.dropBack('demo', 42, 45.5, 1), command: UpdateCommand,
-    input: { Key: ticketKey, UpdateExpression: 'SET #s = :waiting, queueKey = :k, misses = :m REMOVE desk, taskToken, deadline, calledAt', ConditionExpression: '#s = :called',
-      ExpressionAttributeValues: { ':waiting': 'waiting', ':k': 45.5, ':m': 1, ':called': 'called' }, ExpressionAttributeNames: { '#s': 'status' } } },
-  { name: 'markNoShow', run: () => db.markNoShow('demo', 42, 3, iso), command: UpdateCommand,
-    input: { Key: ticketKey, UpdateExpression: 'SET #s = :no_show, closedAt = :t, misses = :m REMOVE taskToken, deadline', ConditionExpression: '#s = :called',
-      ExpressionAttributeValues: { ':no_show': 'no_show', ':t': iso, ':m': 3, ':called': 'called' }, ExpressionAttributeNames: { '#s': 'status' } } },
+  { name: 'dropBack', run: () => db.dropBack('demo', 42, 45.5, 1, iso), command: UpdateCommand,
+    input: { Key: ticketKey, UpdateExpression: 'SET #s = :waiting, queueKey = :k, misses = :m REMOVE desk, taskToken, deadline, calledAt', ConditionExpression: '#s = :called AND calledAt = :c',
+      ExpressionAttributeValues: { ':waiting': 'waiting', ':k': 45.5, ':m': 1, ':called': 'called', ':c': iso }, ExpressionAttributeNames: { '#s': 'status' } } },
+  { name: 'markNoShow', run: () => db.markNoShow('demo', 42, 3, iso, iso), command: UpdateCommand,
+    input: { Key: ticketKey, UpdateExpression: 'SET #s = :no_show, closedAt = :t, misses = :m REMOVE taskToken, deadline', ConditionExpression: '#s = :called AND calledAt = :c',
+      ExpressionAttributeValues: { ':no_show': 'no_show', ':t': iso, ':m': 3, ':called': 'called', ':c': iso }, ExpressionAttributeNames: { '#s': 'status' } } },
   { name: 'markLeft', run: () => db.markLeft('demo', 42, 'waiting', iso), command: UpdateCommand,
     input: { Key: ticketKey, UpdateExpression: 'SET #s = :left, closedAt = :t REMOVE taskToken, deadline', ConditionExpression: '#s = :from',
       ExpressionAttributeValues: { ':left': 'left', ':t': iso, ':from': 'waiting' }, ExpressionAttributeNames: { '#s': 'status' } } },
