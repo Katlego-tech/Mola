@@ -42,7 +42,9 @@ export async function callNext(officeId: string, desk: string):
       try {
         await revertClaim(officeId, ticket.ticketNo);
       } catch (revertError) {
-        if (!isConditionalFailure(revertError)) throw revertError;
+        if (!isConditionalFailure(revertError)) {
+          console.error('callNext: revert failed', officeId, ticket.ticketNo, revertError);
+        }
       }
       throw error;
     }
