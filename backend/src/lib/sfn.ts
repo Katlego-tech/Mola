@@ -5,6 +5,7 @@ export interface CallInput {
   ticketNo: number;
   desk: string;
   confirmWindowSeconds: number;
+  calledAt: string;
 }
 
 export const sfn = new SFNClient({});

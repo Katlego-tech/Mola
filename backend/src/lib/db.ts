@@ -108,13 +108,13 @@ export async function revertClaim(officeId: string, ticketNo: number): Promise<v
   }));
 }
 
-export async function storeTaskToken(officeId: string, ticketNo: number, taskToken: string, deadlineMs: number): Promise<void> {
+export async function storeTaskToken(officeId: string, ticketNo: number, taskToken: string, deadlineMs: number, calledAtIso: string): Promise<void> {
   await ddb.send(new UpdateCommand({
     TableName: TABLE(), Key: { pk: officePk(officeId), sk: ticketSk(ticketNo) },
     UpdateExpression: 'SET taskToken = :tk, deadline = :dl',
-    ConditionExpression: '#s = :called',
+    ConditionExpression: '#s = :called AND calledAt = :c',
     ExpressionAttributeNames: { '#s': 'status' },
-    ExpressionAttributeValues: { ':tk': taskToken, ':dl': deadlineMs, ':called': 'called' },
+    ExpressionAttributeValues: { ':tk': taskToken, ':dl': deadlineMs, ':called': 'called', ':c': calledAtIso },
   }));
 }
 
@@ -138,23 +138,23 @@ export async function finishServing(officeId: string, ticketNo: number, closedAt
   }));
 }
 
-export async function dropBack(officeId: string, ticketNo: number, queueKey: number, misses: number): Promise<void> {
+export async function dropBack(officeId: string, ticketNo: number, queueKey: number, misses: number, calledAtIso: string): Promise<void> {
   await ddb.send(new UpdateCommand({
     TableName: TABLE(), Key: { pk: officePk(officeId), sk: ticketSk(ticketNo) },
     UpdateExpression: 'SET #s = :waiting, queueKey = :k, misses = :m REMOVE desk, taskToken, deadline, calledAt',
-    ConditionExpression: '#s = :called',
+    ConditionExpression: '#s = :called AND calledAt = :c',
     ExpressionAttributeNames: { '#s': 'status' },
-    ExpressionAttributeValues: { ':waiting': 'waiting', ':k': queueKey, ':m': misses, ':called': 'called' },
+    ExpressionAttributeValues: { ':waiting': 'waiting', ':k': queueKey, ':m': misses, ':called': 'called', ':c': calledAtIso },
   }));
 }
 
-export async function markNoShow(officeId: string, ticketNo: number, misses: number, closedAtIso: string): Promise<void> {
+export async function markNoShow(officeId: string, ticketNo: number, misses: number, closedAtIso: string, calledAtIso: string): Promise<void> {
   await ddb.send(new UpdateCommand({
     TableName: TABLE(), Key: { pk: officePk(officeId), sk: ticketSk(ticketNo) },
     UpdateExpression: 'SET #s = :no_show, closedAt = :t, misses = :m REMOVE taskToken, deadline',
-    ConditionExpression: '#s = :called',
+    ConditionExpression: '#s = :called AND calledAt = :c',
     ExpressionAttributeNames: { '#s': 'status' },
-    ExpressionAttributeValues: { ':no_show': 'no_show', ':t': closedAtIso, ':m': misses, ':called': 'called' },
+    ExpressionAttributeValues: { ':no_show': 'no_show', ':t': closedAtIso, ':m': misses, ':called': 'called', ':c': calledAtIso },
   }));
 }
 

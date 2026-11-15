@@ -36,7 +36,7 @@ export async function callNext(officeId: string, desk: string):
     try {
       await startCall({
         officeId, ticketNo: ticket.ticketNo, desk,
-        confirmWindowSeconds: rules().confirmWindowSeconds,
+        confirmWindowSeconds: rules().confirmWindowSeconds, calledAt: nowIso,
       }, now);
     } catch (error) {
       try {
