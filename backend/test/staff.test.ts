@@ -3,10 +3,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { handler } from '../src/handlers/staff';
 import { broadcast } from '../src/lib/broadcast';
 import { callNext } from '../src/lib/calling';
-import { getConnection } from '../src/lib/db';
+import { getConnection, saveNotes } from '../src/lib/db';
 import { send } from '../src/lib/ws';
 
-vi.mock('../src/lib/db', () => ({ getConnection: vi.fn() }));
+vi.mock('../src/lib/db', () => ({ getConnection: vi.fn(), saveNotes: vi.fn() }));
 vi.mock('../src/lib/calling', () => ({ callNext: vi.fn() }));
 vi.mock('../src/lib/broadcast', () => ({ broadcast: vi.fn() }));
 vi.mock('../src/lib/ws', () => ({ send: vi.fn() }));
@@ -121,5 +121,28 @@ describe('staff callNext', () => {
     await expect(handler(event(message()))).resolves.toEqual({ statusCode: 200 });
     expect(log).toHaveBeenCalledWith(expect.any(String), error);
     expect(send).toHaveBeenLastCalledWith('c-9', expect.objectContaining({ type: 'error', code: 'internal' }));
+  });
+});
+
+
+describe('saving office notes', () => {
+  const save = () => JSON.stringify({ action: 'saveNotes', text: 'Bring ID', baseVersion: 3, staffKey });
+  it('sends the new notes before broadcasting the updated board', async () => {
+    vi.mocked(saveNotes).mockResolvedValue(4);
+    vi.mocked(broadcast).mockImplementation(() => {
+      expect(send).toHaveBeenCalledWith('c-9', { type: 'notes', lang: 'en', version: 4, text: 'Bring ID', translated: false });
+      return Promise.resolve();
+    });
+    await handler(event(save()));
+    expect(saveNotes).toHaveBeenCalledExactlyOnceWith('demo', 'Bring ID', 3, expect.any(String));
+    expect(broadcast).toHaveBeenCalledWith('demo', configuredRules);
+  });
+  it('reports a stale base without broadcasting', async () => {
+    vi.mocked(saveNotes).mockRejectedValue(Object.assign(new Error('stale'), { name: 'TransactionCanceledException' }));
+    await expectError(save(), 'notes_conflict');
+  });
+  it('rejects a bad staff key before saving', async () => {
+    await expectError(JSON.stringify({ action: 'saveNotes', text: '', baseVersion: 0, staffKey: randomUUID() }), 'forbidden');
+    expect(saveNotes).not.toHaveBeenCalled();
   });
 });

@@ -2,6 +2,9 @@ import type { ErrorCode } from './messages';
 import { send } from './ws';
 
 const MESSAGES: Record<ErrorCode, string> = {
+  assist_unavailable: "The assistant isn't available right now. Ask at the desk.",
+  ask_limit: "You've used all your questions for this ticket. Ask at the desk.",
+  notes_conflict: 'Someone else changed the notes. Your text is kept. Check theirs, then save again.',
   no_session: 'This connection has no session. Reconnect.',
   bad_request: 'That message is not valid.',
   unknown_action: 'That action does not exist.',

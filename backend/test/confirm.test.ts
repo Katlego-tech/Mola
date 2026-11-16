@@ -87,7 +87,7 @@ describe('confirm', () => {
       ['phone', { type: 'notice', code: 'too_late', ticketNo: 42 }],
       ['phone', { type: 'status',
         ticket: { ticketNo: 42, status, position: status === 'waiting' ? 2 : null, desk: null, deadline: null, misses: 1 },
-        board: { officeId: 'demo', calling: [], serving: [], waitingCount: status === 'waiting' ? 2 : 1,
+        board: { officeId: 'demo', notesVersion: 0, calling: [], serving: [], waitingCount: status === 'waiting' ? 2 : 1,
           upNext: status === 'waiting' ? [41, 42] : [41], serverTime: now, rules: officeRules } }],
     ]);
     expectNoMutation();

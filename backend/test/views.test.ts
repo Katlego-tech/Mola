@@ -53,7 +53,7 @@ describe('ticketView', () => {
 describe('boardOf', () => {
   it('builds an empty board with the supplied office ID when META is absent', () => {
     expect(boardOf('empty', snapshot([]), nowMs, rules)).toEqual({
-      officeId: 'empty', calling: [], serving: [], waitingCount: 0, upNext: [], serverTime: nowMs, rules,
+      officeId: 'empty', notesVersion: 0, calling: [], serving: [], waitingCount: 0, upNext: [], serverTime: nowMs, rules,
     });
   });
 
@@ -72,7 +72,7 @@ describe('boardOf', () => {
     s.office = { officeId: 'other', ticketCounter: 17, createdAt: new Date(nowMs).toISOString() };
     const original = structuredClone(s);
     expect(boardOf('demo', s, nowMs, rules)).toEqual({
-      officeId: 'demo', calling: [
+      officeId: 'demo', notesVersion: 0, calling: [
         { ticketNo: 9, desk: 'Desk 1', deadline: nowMs + 30_000 },
         { ticketNo: 10, desk: 'Desk 2', deadline: null },
       ], serving: [{ ticketNo: 11, desk: 'Desk 3' }],
@@ -80,4 +80,11 @@ describe('boardOf', () => {
     });
     expect(s).toEqual(original);
   });
+});
+
+
+it('publishes the current notes version on the board', () => {
+  const s = snapshot([]);
+  s.office = { officeId: 'clinic', ticketCounter: 0, createdAt: new Date(nowMs).toISOString(), notesVersion: 3 };
+  expect(boardOf('clinic', s, nowMs, rules).notesVersion).toBe(3);
 });

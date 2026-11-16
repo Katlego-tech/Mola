@@ -183,7 +183,7 @@ describe('resume', () => {
       type: 'status',
       ticket: { ticketNo: 42, status, position: status === 'waiting' ? 2 : null,
         desk: status === 'called' || status === 'serving' ? 'Desk 2' : null, deadline: null, misses: 0 },
-      board: { officeId: 'demo',
+      board: { officeId: 'demo', notesVersion: 0,
         calling: status === 'called' ? [{ ticketNo: 42, desk: 'Desk 2', deadline: null }] : [],
         serving: status === 'serving' ? [{ ticketNo: 42, desk: 'Desk 2' }] : [],
         waitingCount: status === 'waiting' ? 2 : 1, upNext: status === 'waiting' ? [41, 42] : [41],

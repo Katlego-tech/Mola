@@ -24,3 +24,9 @@ export function ticketLifetimeSeconds(): number {
 export const CONNECTION_TTL_SECONDS = 7200;
 
 export const OFFICE_ID = /^[a-z0-9-]{1,40}$/;
+
+export const MAX_ASKS_PER_TICKET = 10;
+
+export function officeTimeZone(): string {
+  return process.env.OFFICE_TIME_ZONE ?? 'Africa/Johannesburg';
+}

@@ -9,7 +9,7 @@ afterEach(cleanup);
 
 const rules = { confirmWindowSeconds: 120, dropBackPlaces: 3, maxMisses: 2 };
 const board: Board = {
-  officeId: 'soweto-clinic',
+  officeId: 'soweto-clinic', notesVersion: 0,
   calling: [{ ticketNo: 38, desk: 'Desk 1', deadline: null }],
   serving: [],
   waitingCount: 5,

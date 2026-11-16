@@ -1,5 +1,6 @@
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
-import { DeleteCommand, DynamoDBDocumentClient, GetCommand, QueryCommand, PutCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
+import { DeleteCommand, DynamoDBDocumentClient, GetCommand, QueryCommand, PutCommand, TransactWriteCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
+import type { Lang } from './lang';
 import type { Connection, Office, OfficeSnapshot, Screen, Ticket } from './model';
 
 export const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}), {
@@ -194,5 +195,69 @@ export async function putScreen(s: Screen): Promise<void> {
 export async function deleteScreen(officeId: string, connectionId: string): Promise<void> {
   await ddb.send(new DeleteCommand({
     TableName: TABLE(), Key: { pk: officePk(officeId), sk: screenSk(connectionId) },
+  }));
+}
+
+
+export async function getNotes(officeId: string): Promise<{ version: number; text: string } | null> {
+  const { Item } = await ddb.send(new GetCommand({
+    TableName: TABLE(), Key: { pk: `NOTES#${officeId}`, sk: 'TEXT' }, ConsistentRead: true,
+  }));
+  return Item ? { version: Item.version as number, text: Item.text as string } : null;
+}
+
+export async function saveNotes(officeId: string, text: string, baseVersion: number, nowIso: string): Promise<number> {
+  const next = baseVersion + 1;
+  await ddb.send(new TransactWriteCommand({
+    TransactItems: [
+      { Update: {
+        TableName: TABLE(), Key: { pk: officePk(officeId), sk: 'META' },
+        UpdateExpression: 'SET notesVersion = :next, officeId = if_not_exists(officeId, :o), createdAt = if_not_exists(createdAt, :now)',
+        ConditionExpression: baseVersion === 0 ? '(notesVersion = :base OR attribute_not_exists(notesVersion))' : 'notesVersion = :base',
+        ExpressionAttributeValues: { ':next': next, ':base': baseVersion, ':o': officeId, ':now': nowIso },
+      } },
+      { Put: {
+        TableName: TABLE(),
+        Item: { pk: `NOTES#${officeId}`, sk: 'TEXT', officeId, version: next, text, updatedAt: nowIso },
+      } },
+    ],
+  }));
+  return next;
+}
+
+const translationKey = (officeId: string, lang: Lang, version: number) => ({
+  pk: `NOTES#${officeId}`, sk: `LANG#${lang}#${String(version).padStart(6, '0')}`,
+});
+
+export async function getNotesTranslation(officeId: string, lang: Lang, version: number): Promise<{ text: string } | null> {
+  const { Item } = await ddb.send(new GetCommand({
+    TableName: TABLE(), Key: translationKey(officeId, lang, version),
+  }));
+  return Item ? { text: Item.text as string } : null;
+}
+
+export async function putNotesTranslation(officeId: string, lang: Lang, version: number, text: string, expiresAt: number): Promise<void> {
+  await ddb.send(new PutCommand({
+    TableName: TABLE(), Item: { ...translationKey(officeId, lang, version), officeId, lang, version, text, expiresAt },
+    ConditionExpression: 'attribute_not_exists(pk)',
+  }));
+}
+
+export async function reserveAsk(officeId: string, ticketNo: number, max: number): Promise<number> {
+  const { Attributes } = await ddb.send(new UpdateCommand({
+    TableName: TABLE(), Key: { pk: officePk(officeId), sk: ticketSk(ticketNo) },
+    UpdateExpression: 'ADD asks :one', ReturnValues: 'UPDATED_NEW',
+    ConditionExpression: '#s IN (:waiting, :called, :serving) AND (attribute_not_exists(asks) OR asks < :max)',
+    ExpressionAttributeNames: { '#s': 'status' },
+    ExpressionAttributeValues: { ':one': 1, ':max': max, ':waiting': 'waiting', ':called': 'called', ':serving': 'serving' },
+  }));
+  return Attributes?.asks as number;
+}
+
+export async function refundAsk(officeId: string, ticketNo: number): Promise<void> {
+  await ddb.send(new UpdateCommand({
+    TableName: TABLE(), Key: { pk: officePk(officeId), sk: ticketSk(ticketNo) },
+    UpdateExpression: 'ADD asks :minus', ConditionExpression: 'asks > :zero',
+    ExpressionAttributeValues: { ':minus': -1, ':zero': 0 },
   }));
 }
