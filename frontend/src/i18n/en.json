@@ -1,7 +1,7 @@
 {
   "brand": "MOLA",
   "aheadNone": "You're next",
-  "aheadOne": "1 person ahead",
+  "aheadOne": "{n} person ahead",
   "aheadMany": "{n} people ahead",
   "inLineOrdinal": "You're {ordinal} in line.",
   "inLineNumber": "You're number {n} in line.",
