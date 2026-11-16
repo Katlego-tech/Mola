@@ -80,6 +80,32 @@ describe('PatronApp', () => {
     expect(screen.getByText('Something went wrong on our side. Try again.')).toBeTruthy();
   });
 
+  it('retries a resume that API Gateway failed, and says so meanwhile', () => {
+    vi.useFakeTimers();
+    try {
+      localStorage.setItem('mola:demo', JSON.stringify({ ticketNo: 7, secret }));
+      render(<PatronApp />);
+      open();
+      act(() => fake.opts?.onMessage({ message: 'Internal server error' }));
+      expect(screen.getByText('Something went wrong on our side. Try again.')).toBeTruthy();
+      act(() => { vi.advanceTimersByTime(2000); });
+      expect(sent().filter((m) => m.action === 'resume')).toHaveLength(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('clears the failure line once the server reports the ticket again', () => {
+    localStorage.setItem('mola:demo', JSON.stringify({ ticketNo: 7, secret }));
+    render(<PatronApp />);
+    open();
+    receive({ type: 'status', ticket: ticket({ status: 'called', position: null, desk: 'Desk 1', deadline: board.serverTime + 60_000 }), board });
+    act(() => fake.opts?.onMessage({ message: 'Internal server error' }));
+    expect(screen.getByText('Something went wrong on our side. Try again.')).toBeTruthy();
+    receive({ type: 'status', ticket: ticket({ status: 'done', position: null }), board });
+    expect(screen.queryByText('Something went wrong on our side. Try again.')).toBeNull();
+  });
+
   it('forgets the secret when the ticket closes', () => {
     localStorage.setItem('mola:demo', JSON.stringify({ ticketNo: 7, secret }));
     render(<PatronApp />);
