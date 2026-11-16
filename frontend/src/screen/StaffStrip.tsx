@@ -16,6 +16,7 @@ export function StaffStrip({ desk, onDesk, onCallNext, pending, log }: {
         id="desk"
         value={desk}
         maxLength={20}
+        disabled={pending}
         onChange={(e) => onDesk(e.target.value)}
         className="w-[12ch] rounded-[14px] border-2 border-muted bg-ground px-[0.9vw] py-[1.2vh] text-[2.4vh] font-bold text-text"
       />
