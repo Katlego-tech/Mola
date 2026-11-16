@@ -21,6 +21,7 @@ if (!args.url || !args['staff-key']) {
   process.exit(2);
 }
 const clients = Number(args.clients ?? 100);
+const BATCH = Number(args.batch ?? 5);
 const rounds = Number(args.rounds ?? 5);
 const office = `load-${Date.now().toString(36)}`;
 const GOAL_MS = 1000;
@@ -51,16 +52,42 @@ async function connect(role) {
     }
   }
 }
-function fail(why) {
+const phones = [];
+let staff = null;
+/** Every phone that holds a ticket leaves, five at a time, each waiting for its `left` status, so
+ *  the office does not keep re-calling unconfirmed tickets after the test. */
+async function cleanup() {
+  const holders = phones.filter((p) => p.ticket);
+  let confirmed = 0;
+  for (let i = 0; i < holders.length; i += BATCH) {
+    await Promise.all(holders.slice(i, i + BATCH).map((p) => new Promise((resolve) => {
+      const timer = setTimeout(() => { p.listeners.delete(onLeft); resolve(); }, 10_000);
+      function onLeft(m) {
+        if (m.type !== 'status' || m.ticket.ticketNo !== p.ticket.ticketNo || m.ticket.status !== 'left') return;
+        p.listeners.delete(onLeft); // count each phone once, however many broadcasts repeat it
+        confirmed += 1;
+        clearTimeout(timer);
+        resolve();
+      }
+      p.listeners.add(onLeft);
+      p.send({ action: 'leave', ...p.ticket });
+    })));
+  }
+  if (holders.length) console.log(`  cleanup: ${confirmed} of ${holders.length} tickets left the queue`);
+  for (const p of [...phones, ...(staff ? [staff] : [])]) p.ws.close();
+}
+let failing = false;
+async function fail(why) {
   console.error(`  FAILED  ${why}`);
+  if (failing) return; // the first failure is already cleaning up and will exit
+  failing = true;
+  await cleanup();
   process.exit(1);
 }
 
 console.log(`Load test: ${clients} phones, ${rounds} calls, office ${office}`);
-const phones = [];
 // Five at a time: the joins each broadcast to every phone, and the account's Lambda concurrency
 // is the real ceiling here, not the code.
-const BATCH = Number(args.batch ?? 5);
 for (let i = 0; i < clients; i += BATCH) {
   phones.push(...(await Promise.all(Array.from({ length: Math.min(BATCH, clients - i) }, () => connect('patron')))));
 }
@@ -85,7 +112,7 @@ for (let i = 0; i < phones.length; i += BATCH) {
 console.log(`  ${phones.length} phones hold tickets`);
 await sleep(2000); // let the joins' broadcasts drain before measuring
 
-const staff = await connect('screen');
+staff = await connect('screen');
 const samples = [];
 for (let round = 1; round <= rounds; round += 1) {
   const desk = `Load ${round}`;
@@ -109,13 +136,13 @@ for (let round = 1; round <= rounds; round += 1) {
   console.log(`  round ${round}: slowest phone ${Math.round(Math.max(...times))} ms`);
 }
 
-const sorted = samples.filter(Number.isFinite).sort((x, y) => x - y);
-const missed = samples.length - sorted.length;
-const pct = (q) => Math.round(sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))]);
+// Phones that never heard a call count as slower than everything (Infinity), so p95 is never flattered.
+const sorted = [...samples].sort((x, y) => x - y);
+const missed = samples.filter((t) => !Number.isFinite(t)).length;
+const pct = (q) => sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))];
+const ms = (t) => (Number.isFinite(t) ? `${Math.round(t)} ms` : 'never');
+const p95 = pct(0.95);
 console.log(`\n  phones x rounds: ${samples.length}, never heard within 10 s: ${missed}`);
-console.log(`  p50 ${pct(0.5)} ms   p95 ${pct(0.95)} ms   max ${Math.round(sorted.at(-1))} ms   (goal: p95 <= ${GOAL_MS} ms)`);
-// Leave the queue, so the office does not keep re-calling 100 unconfirmed tickets after the test.
-for (const p of phones) if (p.ticket) p.send({ action: 'leave', ...p.ticket });
-await sleep(5000);
-for (const p of [...phones, staff]) p.ws.close();
-process.exit(missed === 0 && pct(0.95) <= GOAL_MS ? 0 : 1);
+console.log(`  p50 ${ms(pct(0.5))}   p95 ${ms(p95)}   max ${ms(sorted.at(-1))}   (goal: p95 <= ${GOAL_MS} ms)`);
+await cleanup();
+process.exit(missed === 0 && p95 <= GOAL_MS ? 0 : 1);
