@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
-import type { Board } from '@/lib/messages';
+import type { Board, ServerMessage } from '@/lib/messages';
 import { officeName } from '@/lib/format';
 import { OFFICE_ID, useOfficeSocket } from '@/lib/useOfficeSocket';
 import { BoardView } from './BoardView';
+import { NotesDialog, type NotesDialogHandle } from './NotesDialog';
+import { SummaryDialog } from './SummaryDialog';
 import { StaffStrip } from './StaffStrip';
 import { UnlockDialog } from './UnlockDialog';
 
@@ -35,6 +37,10 @@ function ScreenBoard({ officeId, staff }: { officeId: string; staff: boolean }) 
   const [unlock, setUnlock] = useState<{ open: boolean; error: boolean }>({ open: false, error: false });
   const deskRef = useRef(desk);
   const boardRef = useRef<Board | null>(null);
+  const notesDialog = useRef<NotesDialogHandle>(null);
+  const [summaryOpen, setSummaryOpen] = useState(false);
+  const [summary, setSummary] = useState<Extract<ServerMessage, { type: 'summary' }> | null>(null);
+  const unlockAction = useRef<((key: string) => void) | null>(null);
   const keyName = `mola:staff:${officeId}`;
 
   const { state, send } = useOfficeSocket(officeId, 'screen', {
@@ -44,7 +50,11 @@ function ScreenBoard({ officeId, staff }: { officeId: string; staff: boolean }) 
       sendNow({ action: 'watch' });
     },
     onMessage: (msg) => {
+      notesDialog.current?.receive(msg);
       switch (msg.type) {
+        case 'summary':
+          setSummary(msg);
+          break;
         case 'board': {
           boardRef.current = msg.board;
           setView({ board: msg.board, receivedAt: Date.now() });
@@ -66,6 +76,7 @@ function ScreenBoard({ officeId, staff }: { officeId: string; staff: boolean }) 
           pendingRef.current = null;
           setPending(false);
           if (msg.code === 'forbidden') {
+            setSummaryOpen(false);
             write(sessionStorage, keyName, null);
             setUnlock({ open: true, error: true });
           } else if (msg.code === 'desk_busy') {
@@ -92,6 +103,13 @@ function ScreenBoard({ officeId, staff }: { officeId: string; staff: boolean }) 
     send({ action: 'callNext', desk: deskRef.current, staffKey });
   };
 
+  const withKey = (action: (key: string) => void) => {
+    unlockAction.current = action;
+    const key = read(sessionStorage, keyName);
+    if (key) action(key);
+    else setUnlock({ open: true, error: false });
+  };
+
   if (!view) {
     return (
       <p className="grid h-dvh place-items-center text-[3vh] text-muted">Connecting to {officeName(officeId)}</p>
@@ -111,26 +129,41 @@ function ScreenBoard({ officeId, staff }: { officeId: string; staff: boolean }) 
             }}
             pending={pending}
             log={log}
-            onCallNext={() => {
-              const key = read(sessionStorage, keyName);
-              if (key) callNext(key);
-              else setUnlock({ open: true, error: false });
-            }}
+            onNotes={() => notesDialog.current?.open()}
+            onSummary={() => withKey((staffKey) => {
+              setSummary(null);
+              setSummaryOpen(true);
+              send({ action: 'daySummary', staffKey });
+            })}
+            onCallNext={() => withKey(callNext)}
           />
         )}
       </BoardView>
-      {staff && (
+      {staff && <>
+        <NotesDialog
+          ref={notesDialog}
+          onLoad={() => send({ action: 'notes', lang: 'en' })}
+          onSave={(text, baseVersion) => withKey((staffKey) => {
+            notesDialog.current?.setSaving(true);
+            send({ action: 'saveNotes', text, baseVersion, staffKey });
+          })}
+          onSaved={() => setLog('Notes saved.')}
+        />
+        {summaryOpen && <SummaryDialog officeId={officeId} summary={summary} onClose={() => setSummaryOpen(false)} />}
         <UnlockDialog
           open={unlock.open}
           error={unlock.error}
-          onCancel={() => setUnlock({ open: false, error: false })}
+          onCancel={() => {
+            notesDialog.current?.setSaving(false);
+            setUnlock({ open: false, error: false });
+          }}
           onUnlock={(key) => {
             write(sessionStorage, keyName, key);
             setUnlock({ open: false, error: false });
-            callNext(key);
+            unlockAction.current?.(key);
           }}
         />
-      )}
+      </>}
     </>
   );
 }

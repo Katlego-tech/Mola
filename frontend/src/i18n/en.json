@@ -49,5 +49,21 @@
   "keepOpen": "Keep this page open. Your phone buzzes when it's your turn.",
   "yourNumber": "Your number",
   "language": "Language",
-  "translationsBy": "Translations by Amazon Nova."
+  "translationsBy": "Translations by Amazon Nova.",
+  "askOffice": "Ask the office",
+  "close": "Close",
+  "officeSays": "What the office says",
+  "noNotes": "The office hasn't added notes yet.",
+  "checkingNotes": "Checking the notes…",
+  "notesTranslatedBy": "Translated by Amazon Nova.",
+  "answerLabel": "From the office's notes",
+  "answerBy": "Answered by Amazon Nova. Check anything important at the desk.",
+  "answerNotFound": "The notes don't cover that. Ask at the desk when you're called.",
+  "askLimit": "You've used all your questions for this ticket. Ask at the desk.",
+  "assistUnavailable": "The assistant isn't available right now. Ask at the desk.",
+  "yourQuestion": "Your question",
+  "ask": "Ask",
+  "askHint": "Don't type your ID number or other personal details.",
+  "asksLeftOne": "1 question left on this ticket.",
+  "asksLeftMany": "{n} questions left on this ticket."
 }
