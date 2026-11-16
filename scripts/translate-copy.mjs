@@ -40,7 +40,7 @@ async function main() {
           inferenceConfig: { maxTokens: 4000, temperature: 0 },
         }));
         const text = (response.output?.message?.content ?? []).map((block) => block.text ?? '').join('');
-        const translated = JSON.parse(text);
+        const translated = JSON.parse(text.trim().replace(/^```(?:json)?\s*|\s*```$/g, ''));
         if (!checkCatalog(source, translated)) throw new Error('Translation changed keys, placeholders or numbers');
         await writeFile(new URL(`../frontend/src/i18n/${lang}.json`, import.meta.url), `${JSON.stringify({
           ...translated,
