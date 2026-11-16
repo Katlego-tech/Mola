@@ -17,6 +17,9 @@ function PatronSession({ officeId }: { officeId: string }) {
   const [joining, setJoining] = useState(false);
   const [tooLate, setTooLate] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
+  const viewRef = useRef(false);
+  const sendRef = useRef<((msg: Parameters<typeof send>[0]) => void) | null>(null);
+  const RESUME_RETRY_MS = 2000;
   const [lastUpdateAt, setLastUpdateAt] = useState(() => Date.now());
   const lastUpdateRef = useRef(lastUpdateAt);
 
@@ -31,6 +34,7 @@ function PatronSession({ officeId }: { officeId: string }) {
     onOpen: (sendNow) => {
       // A join tapped before a drop never got its answer; let the patron tap again.
       setJoining(false);
+      setFailure(null);
       const own = storedRef.current;
       if (own) sendNow({ action: 'resume', ticketNo: own.ticketNo, secret: own.secret });
     },
@@ -46,6 +50,8 @@ function PatronSession({ officeId }: { officeId: string }) {
           setTooLate(false);
           break;
         case 'status':
+          viewRef.current = true;
+          setFailure(null);
           setView({ ticket: msg.ticket, board: msg.board, receivedAt: at });
           if (msg.ticket.status !== 'waiting' && msg.ticket.status !== 'no_show') setTooLate(false);
           if (CLOSED.has(msg.ticket.status)) remember(null);
@@ -55,9 +61,17 @@ function PatronSession({ officeId }: { officeId: string }) {
           break;
         case 'error':
           setJoining(false);
-          if (msg.code === 'internal') setFailure(msg.message);
+          if (msg.code === 'internal') {
+            setFailure(msg.message);
+            // A resume that failed on the server would leave the page waiting forever: try again.
+            const own = storedRef.current;
+            if (own && !viewRef.current) {
+              setTimeout(() => sendRef.current?.({ action: 'resume', ticketNo: own.ticketNo, secret: own.secret }), RESUME_RETRY_MS);
+            }
+          }
           if (msg.code === 'bad_ticket') {
             remember(null);
+            viewRef.current = false;
             setView(null);
           }
           break;
@@ -65,6 +79,10 @@ function PatronSession({ officeId }: { officeId: string }) {
           break;
       }
     },
+  });
+
+  useEffect(() => {
+    sendRef.current = send;
   });
 
   // "It's your turn": buzz and chime once, when the status turns to called. A reload while already
@@ -135,6 +153,7 @@ function PatronSession({ officeId }: { officeId: string }) {
         unlockSound();
         setFailure(null);
         setJoining(true);
+        viewRef.current = false;
         setView(null);
         send({ action: 'join' });
       }}

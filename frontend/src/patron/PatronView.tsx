@@ -77,6 +77,7 @@ function CalledView(props: PatronViewProps & { ticket: TicketView; board: Board 
       tone="go"
       footer={
         <>
+          {props.failure && <p role="alert" className="px-1 font-semibold text-go-ink">{props.failure}</p>}
           <Button variant="onGo" onClick={props.onConfirm} disabled={left === null || left <= 0}>
             <Check weight="bold" aria-hidden />
             Confirm
@@ -120,6 +121,7 @@ export function PatronView(props: PatronViewProps) {
       return (
         <Page officeId={officeId}>
           <p className="text-muted" role="status">Finding your ticket</p>
+          {props.failure && <p role="alert" className="px-1 font-semibold">{props.failure}</p>}
         </Page>
       );
     }
