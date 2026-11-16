@@ -33,7 +33,7 @@ beforeEach(() => {
   vi.spyOn(console, 'info').mockImplementation(() => undefined);
   vi.mocked(broadcast).mockResolvedValue(undefined);
 });
-afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
+afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 
 describe('broadcaster', () => {
   it('acknowledges an empty batch without broadcasting', async () => {
@@ -45,22 +45,47 @@ describe('broadcaster', () => {
     expect(await handler(event(record('clinic'), record('licensing'), record('clinic'))))
       .toEqual({ batchItemFailures: [] });
     expect(broadcast).toHaveBeenCalledTimes(2);
-    expect(broadcast).toHaveBeenCalledWith('clinic', rules);
-    expect(broadcast).toHaveBeenCalledWith('licensing', rules);
+    expect(broadcast).toHaveBeenCalledWith('clinic', rules, expect.any(Object));
+    expect(broadcast).toHaveBeenCalledWith('licensing', rules, expect.any(Object));
   });
 
-  it('retries every coalesced message for a failed office while other offices succeed', async () => {
-    const error = new Error('push failed');
+  it('retries a failed read after 100 ms and 400 ms then acknowledges every office', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const error = new Error('read failed');
     vi.mocked(broadcast).mockImplementation(async officeId => {
       if (officeId === 'clinic') throw error;
     });
-    const first = record('clinic');
-    const second = record('clinic');
-    expect(await handler(event(first, record('licensing'), second, record('permits')))).toEqual({
-      batchItemFailures: [{ itemIdentifier: first.messageId }, { itemIdentifier: second.messageId }],
-    });
-    expect(broadcast).toHaveBeenCalledTimes(3);
+    const pending = handler(event(record('clinic'), record('licensing'), record('clinic'), record('permits')));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(broadcast).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(99);
+    expect(broadcast).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(broadcast).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(399);
+    expect(broadcast).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(await pending).toEqual({ batchItemFailures: [] });
+    expect(broadcast).toHaveBeenCalledTimes(5);
     expect(console.error).toHaveBeenCalledWith(expect.any(String), 'clinic', error);
+    expect(console.info).toHaveBeenCalledWith(expect.objectContaining({ officeId: 'clinic', attempts: 3 }));
+  });
+
+  it.each([1, 2])('stops retrying when the read succeeds after %i failures', async failures => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    for (let i = 0; i < failures; i++) vi.mocked(broadcast).mockRejectedValueOnce(new Error('read failed'));
+    const pending = handler(event(record('clinic')));
+    await vi.runAllTimersAsync();
+    expect(await pending).toEqual({ batchItemFailures: [] });
+    expect(broadcast).toHaveBeenCalledTimes(failures + 1);
+    expect(console.error).not.toHaveBeenCalled();
+    expect(console.info).toHaveBeenCalledWith(expect.objectContaining({ attempts: failures + 1 }));
+  });
+
+  it('acknowledges a completed broadcast without retrying delivery failures', async () => {
+    expect(await handler(event(record('clinic')))).toEqual({ batchItemFailures: [] });
+    expect(broadcast).toHaveBeenCalledTimes(1);
+    expect(console.info).toHaveBeenCalledWith(expect.objectContaining({ attempts: 1 }));
   });
 
   it.each([
@@ -73,15 +98,37 @@ describe('broadcaster', () => {
   ])('logs and drops a malformed body: %s', async body => {
     const bad = { ...record('clinic'), body };
     expect(await handler(event(bad, record('licensing')))).toEqual({ batchItemFailures: [] });
-    expect(broadcast).toHaveBeenCalledExactlyOnceWith('licensing', rules);
+    expect(broadcast).toHaveBeenCalledExactlyOnceWith('licensing', rules, expect.any(Object));
     expect(console.error).toHaveBeenCalledWith(expect.any(String), bad.messageId, expect.anything());
+  });
+
+  it('logs cumulative read and send timings across attempts without adding retry delays to queue latency', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    vi.mocked(broadcast).mockImplementationOnce(async (_officeId, _rules, metrics) => {
+      if (metrics) metrics.readMs += 15;
+      throw new Error('read failed');
+    }).mockImplementationOnce(async (_officeId, _rules, metrics) => {
+      if (metrics) {
+        metrics.readMs += 12;
+        metrics.sendMs += 20;
+        metrics.connections += 2;
+      }
+      vi.mocked(Date.now).mockReturnValue(now + 147);
+    });
+    const pending = handler(event(record('clinic')));
+    await vi.runAllTimersAsync();
+    await pending;
+    expect(console.info).toHaveBeenCalledExactlyOnceWith({
+      event: 'broadcast_queue_latency', officeId: 'clinic', requestedAt: now - 100,
+      queueLatencyMs: 100, requestCount: 1, readMs: 27, sendMs: 20, connections: 2, attempts: 2,
+    });
   });
 
   it('logs the oldest request latency for each coalesced office', async () => {
     await handler(event(record('clinic', now - 20), record('clinic', now - 120)));
     expect(console.info).toHaveBeenCalledWith({
       event: 'broadcast_queue_latency', officeId: 'clinic', requestedAt: now - 120,
-      queueLatencyMs: 120, requestCount: 2,
+      queueLatencyMs: 120, requestCount: 2, readMs: 0, sendMs: 0, connections: 0, attempts: 1,
     });
   });
 });
