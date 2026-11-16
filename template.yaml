@@ -30,6 +30,19 @@ Parameters:
     NoEcho: true
     AllowedPattern: '^[0-9a-f]{64}$'
     Description: SHA-256 (hex) of the staff key. The key itself never enters the stack.
+  NovaRegion:
+    Type: String
+    Default: eu-central-1
+    AllowedPattern: '^[a-z]{2}(-[a-z]+)+-[0-9]+$'
+    Description: Source region for Amazon Nova inference.
+  NovaFoundationModel:
+    Type: String
+    Default: amazon.nova-2-lite-v1:0
+    Description: Foundation model used through its global inference profile.
+  OfficeTimeZone:
+    Type: String
+    Default: Africa/Johannesburg
+    Description: Office time zone for the day summary.
   AlarmEmail:
     Type: String
     Default: ''
@@ -104,6 +117,13 @@ Resources:
       IntegrationType: AWS_PROXY
       IntegrationUri: !Sub arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${StaffFunction.Arn}/invocations
 
+  AssistIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref WebSocketApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${AssistFunction.Arn}/invocations
+
   ConnectRoute:
     Type: AWS::ApiGatewayV2::Route
     Properties:
@@ -165,9 +185,34 @@ Resources:
       RouteKey: $default
       Target: !Sub integrations/${ClientIntegration}
 
+  AskRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref WebSocketApi
+      RouteKey: ask
+      Target: !Sub integrations/${AssistIntegration}
+  NotesRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref WebSocketApi
+      RouteKey: notes
+      Target: !Sub integrations/${AssistIntegration}
+  DaySummaryRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref WebSocketApi
+      RouteKey: daySummary
+      Target: !Sub integrations/${AssistIntegration}
+  SaveNotesRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref WebSocketApi
+      RouteKey: saveNotes
+      Target: !Sub integrations/${StaffIntegration}
+
   ProdStage:
     Type: AWS::ApiGatewayV2::Stage
-    DependsOn: [ConnectRoute, DisconnectRoute, WatchRoute, PingRoute, JoinRoute, ResumeRoute, ConfirmRoute, LeaveRoute, CallNextRoute, DefaultRoute]
+    DependsOn: [ConnectRoute, DisconnectRoute, WatchRoute, PingRoute, JoinRoute, ResumeRoute, ConfirmRoute, LeaveRoute, CallNextRoute, DefaultRoute, AskRoute, NotesRoute, DaySummaryRoute, SaveNotesRoute]
     Properties:
       ApiId: !Ref WebSocketApi
       StageName: prod
@@ -196,6 +241,14 @@ Resources:
     Properties:
       Action: lambda:InvokeFunction
       FunctionName: !Ref StaffFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${WebSocketApi}/*
+
+  AssistInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref AssistFunction
       Principal: apigateway.amazonaws.com
       SourceArn: !Sub arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${WebSocketApi}/*
 
@@ -281,7 +334,7 @@ Resources:
       Policies:
         - Statement:
             - Effect: Allow
-              Action: [dynamodb:GetItem, dynamodb:Query, dynamodb:UpdateItem, dynamodb:DeleteItem]
+              Action: [dynamodb:GetItem, dynamodb:Query, dynamodb:PutItem, dynamodb:UpdateItem, dynamodb:DeleteItem]
               Resource: !GetAtt MolaTable.Arn
             - Effect: Allow
               Action: execute-api:ManageConnections
@@ -301,6 +354,65 @@ Resources:
         Banner:
           - "js=import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);"
         EntryPoints: [src/handlers/staff.ts]
+
+  AssistLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /mola/${AWS::StackName}/assist
+      RetentionInDays: 14
+  AssistFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: assist.handler
+      LoggingConfig: { LogFormat: JSON, LogGroup: !Ref AssistLogGroup }
+      MemorySize: 256
+      Timeout: 20
+      Environment:
+        Variables:
+          NOVA_REGION: !Ref NovaRegion
+          NOVA_MODEL_ID: !Sub global.${NovaFoundationModel}
+          OFFICE_TIME_ZONE: !Ref OfficeTimeZone
+          STAFF_KEY_SHA256: !Ref StaffKeyHash
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: [dynamodb:GetItem, dynamodb:Query, dynamodb:PutItem, dynamodb:UpdateItem]
+              Resource: !GetAtt MolaTable.Arn
+            - Effect: Allow
+              Action: execute-api:ManageConnections
+              Resource: !Sub arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${WebSocketApi}/prod/POST/@connections/*
+            - Effect: Allow
+              Action: bedrock:InvokeModel
+              Resource: !Sub arn:${AWS::Partition}:bedrock:${NovaRegion}:${AWS::AccountId}:inference-profile/global.${NovaFoundationModel}
+              Condition:
+                StringEquals:
+                  aws:RequestedRegion: !Ref NovaRegion
+            - Effect: Allow
+              Action: bedrock:InvokeModel
+              Resource: !Sub arn:${AWS::Partition}:bedrock:${NovaRegion}::foundation-model/${NovaFoundationModel}
+              Condition:
+                StringEquals:
+                  aws:RequestedRegion: !Ref NovaRegion
+                  bedrock:InferenceProfileArn: !Sub arn:${AWS::Partition}:bedrock:${NovaRegion}:${AWS::AccountId}:inference-profile/global.${NovaFoundationModel}
+            # Global cross-Region inference requires this third, region-less foundation model ARN.
+            - Effect: Allow
+              Action: bedrock:InvokeModel
+              Resource: !Sub arn:${AWS::Partition}:bedrock:::foundation-model/${NovaFoundationModel}
+              Condition:
+                StringEquals:
+                  aws:RequestedRegion: unspecified
+                  bedrock:InferenceProfileArn: !Sub arn:${AWS::Partition}:bedrock:${NovaRegion}:${AWS::AccountId}:inference-profile/global.${NovaFoundationModel}
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Format: esm
+        Target: node24
+        Minify: true
+        Sourcemap: true
+        OutExtension: [.js=.mjs]
+        Banner:
+          - "js=import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);"
+        EntryPoints: [src/handlers/assist.ts]
 
   NotifyCalledLogGroup:
     Type: AWS::Logs::LogGroup
