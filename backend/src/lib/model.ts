@@ -7,7 +7,7 @@ export interface Ticket {
   officeId: string; ticketNo: number; status: TicketStatus; queueKey: number;
   secretHash: string; connectionId?: string; misses: number; desk?: string;
   taskToken?: string; deadline?: number; createdAt: string; calledAt?: string;
-  servedAt?: string; closedAt?: string; asks?: number; expiresAt: number;
+  servedAt?: string; closedAt?: string; asks?: number; speaks?: number; expiresAt: number;
 }
 
 export interface Connection {

@@ -1,13 +1,23 @@
-import { Check, Translate } from '@phosphor-icons/react';
+import { Check, SpeakerHigh, SpeakerSlash, Translate } from '@phosphor-icons/react';
+import { useContext } from 'react';
+import { VoiceContext } from '@/lib/voice';
 import { DropdownMenu } from 'radix-ui';
 import { useT } from '@/i18n';
 import { LANGS, type Lang } from '@/i18n/langs';
 
 export function LanguageMenu() {
+  const voice = useContext(VoiceContext);
   const { t, lang, setLang, available } = useT();
-  if (available.length < 2) return null;
+
   return (
-    <DropdownMenu.Root>
+    <>
+      {voice && <div className="grid gap-1">
+        <button type="button" aria-pressed={voice.enabled} onClick={voice.toggle} className="inline-flex min-h-9 items-center gap-1.5 rounded-full border-[1.5px] border-line bg-surface px-3 text-[0.875rem] font-bold whitespace-nowrap text-text">
+          {voice.enabled ? <SpeakerHigh weight="bold" aria-hidden /> : <SpeakerSlash weight="bold" aria-hidden />}{t('voice')}
+        </button>
+        {voice.hint && <span role="status" className="text-[0.875rem] text-muted">{t('voiceHint')}</span>}
+      </div>}
+      {available.length > 1 && <DropdownMenu.Root>
       <DropdownMenu.Trigger className="inline-flex min-h-9 items-center gap-1.5 rounded-full border-[1.5px] border-line bg-surface px-3 text-[0.875rem] font-bold whitespace-nowrap text-text">
         <Translate weight="bold" aria-hidden />{LANGS[lang]}
       </DropdownMenu.Trigger>
@@ -24,6 +34,7 @@ export function LanguageMenu() {
           <p className="mt-1 border-t-[1.5px] border-line px-3 pt-2 pb-1.5 text-[0.875rem] text-muted">{t('translationsBy')}</p>
         </DropdownMenu.Content>
       </DropdownMenu.Portal>
-    </DropdownMenu.Root>
+    </DropdownMenu.Root>}
+    </>
   );
 }

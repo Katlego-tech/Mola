@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { VoiceContext, useVoice } from '@/lib/voice';
 import { LangProvider, useT } from '@/i18n';
 import { buzz, chime, holdWakeLock, unlockSound } from '@/lib/alerts';
 import type { Board, ClientMessage, TicketView } from '@/lib/messages';
@@ -26,6 +27,9 @@ function PatronSession({ officeId }: { officeId: string }) {
       window.history.replaceState(window.history.state, '', url);
     }
   }, []);
+  const voice = useVoice('mola:voice');
+  const interruptVoice = voice.interrupt;
+  const announced = useRef(new Set<string>());
   const askSheet = useRef<AskSheetHandle>(null);
   const [stored, setStored] = useState<StoredTicket | null>(() => loadTicket(officeId));
   const storedRef = useRef(stored);
@@ -64,6 +68,7 @@ function PatronSession({ officeId }: { officeId: string }) {
       // A join tapped before a drop never got its answer; let the patron tap again.
       setJoining(false);
       setFailure(null);
+      voice.interrupt();
       askSheet.current?.reconnect();
       const own = storedRef.current;
       if (own) sendNow({ action: 'resume', ticketNo: own.ticketNo, secret: own.secret });
@@ -76,6 +81,8 @@ function PatronSession({ officeId }: { officeId: string }) {
       const at = Date.now();
       lastUpdateRef.current = at;
       setLastUpdateAt(at);
+      const spoken = voice.receive(msg);
+      if (spoken || msg.type === 'speech' || (msg.type === 'error' && msg.code === 'voice_unavailable')) return;
       askSheet.current?.receive(msg);
       switch (msg.type) {
         case 'ticket':
@@ -86,15 +93,23 @@ function PatronSession({ officeId }: { officeId: string }) {
           setJoining(false);
           setTooLate(false);
           break;
-        case 'status':
+        case 'status': {
           if (statusRef.current !== msg.ticket.status) clearConfirm();
           statusRef.current = msg.ticket.status;
+          if (msg.ticket.status === 'called' && msg.ticket.deadline !== null && voice.enabled) {
+            const key = `${msg.ticket.ticketNo}:${msg.ticket.deadline}`;
+            if (!announced.current.has(key)) {
+              announced.current.add(key);
+              voice.call(msg.ticket.ticketNo, message => sendRef.current?.(message));
+            }
+          }
           viewRef.current = true;
           setFailure(null);
           setView({ ticket: msg.ticket, board: msg.board, receivedAt: at });
           if (msg.ticket.status !== 'waiting' && msg.ticket.status !== 'no_show') setTooLate(false);
           if (CLOSED.has(msg.ticket.status)) remember(null);
           break;
+        }
         case 'notice':
           if (msg.code === 'too_late') {
             clearConfirm();
@@ -146,12 +161,13 @@ function PatronSession({ officeId }: { officeId: string }) {
 
   useEffect(() => {
     if (state !== 'open') {
+      interruptVoice();
       askSheet.current?.interrupt();
       if (confirmTimer.current !== null) clearTimeout(confirmTimer.current);
       confirmTimer.current = null;
       confirmRef.current = null;
     }
-  }, [state]);
+  }, [state, interruptVoice]);
 
   useEffect(() => () => {
     if (confirmTimer.current !== null) clearTimeout(confirmTimer.current);
@@ -214,7 +230,7 @@ function PatronSession({ officeId }: { officeId: string }) {
   }, [reconnect]);
 
   return (
-    <>
+    <VoiceContext.Provider value={voice}>
       <PatronView
         onAsk={() => askSheet.current?.open()}
         officeId={officeId}
@@ -259,13 +275,18 @@ function PatronSession({ officeId }: { officeId: string }) {
         ref={askSheet}
         online={state === 'open'}
         notesVersion={view?.board.notesVersion ?? 0}
+        onListen={(text, failed) => {
+          const own = storedRef.current;
+          if (own && state === 'open') voice.listen(own.ticketNo, own.secret, text, send, failed);
+          else failed();
+        }}
         onNotes={(lang) => send({ action: 'notes', lang })}
         onAsk={(question, lang) => {
           const own = storedRef.current;
           if (own) send({ action: 'ask', ticketNo: own.ticketNo, secret: own.secret, question, lang });
         }}
       />}
-    </>
+    </VoiceContext.Provider>
   );
 }
 

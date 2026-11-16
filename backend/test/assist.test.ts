@@ -1,6 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { BedrockRuntimeClient, ConverseCommand } from '@aws-sdk/client-bedrock-runtime';
 import { DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
+import { PollyClient, SynthesizeSpeechCommand } from '@aws-sdk/client-polly';
+import { S3Client, HeadObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import { mockClient } from 'aws-sdk-client-mock';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { handler } from '../src/handlers/assist';
@@ -186,4 +188,74 @@ it('rejects unexpected actions', async () => {
 it('rejects malformed messages before reading a session', async () => {
   expect(await run({ action: 'notes', lang: 'fr' })).toMatchObject({ code: 'bad_request' });
   expect(db.calls()).toHaveLength(0);
+});
+
+const polly = mockClient(PollyClient);
+const s3 = mockClient(S3Client);
+describe('speech', () => {
+  beforeEach(() => {
+    polly.reset(); s3.reset();
+    vi.stubEnv('VOICE_BUCKET', 'voice-tests');
+    s3.on(HeadObjectCommand).resolves({});
+    s3.on(PutObjectCommand).resolves({});
+    polly.on(SynthesizeSpeechCommand).resolves({ AudioStream: Object.assign(new ReadableStream<Uint8Array>(), { transformToByteArray: async () => Uint8Array.from([1, 2, 3]), transformToString: async () => 'audio', transformToWebStream: () => new ReadableStream<Uint8Array>() }) });
+    ticket.status = 'called'; ticket.desk = 'Desk 2';
+  });
+  const call = () => ({ action: 'speak', what: 'call', ticketNo: 42 });
+  const answer = () => ({ action: 'speak', what: 'answer', ticketNo: 42, secret, text: 'Bring ID.' });
+  it('builds call text from the office ticket and stores an MP3 on a cache miss', async () => {
+    s3.on(HeadObjectCommand).rejects(Object.assign(new Error('missing'), { name: 'NotFound' }));
+    expect(await run(call())).toMatchObject({ type: 'speech', what: 'call', ticketNo: 42, url: expect.stringMatching(/^\/voice\/[a-f0-9]{64}\.mp3$/) });
+    expect(polly.commandCalls(SynthesizeSpeechCommand)[0]?.args[0].input).toEqual({ Text: 'Ticket 42, please go to Desk 2.', VoiceId: 'Ayanda', Engine: 'neural', OutputFormat: 'mp3', SampleRate: '22050' });
+    expect(s3.commandCalls(PutObjectCommand)[0]?.args[0].input).toMatchObject({ Bucket: 'voice-tests', ContentType: 'audio/mpeg', CacheControl: 'public, max-age=86400, immutable' });
+  });
+  it('skips Polly and writes on a cache hit', async () => {
+    expect(await run(call())).toMatchObject({ type: 'speech' });
+    expect(polly.calls()).toHaveLength(0); expect(s3.commandCalls(PutObjectCommand)).toHaveLength(0);
+    const hash = createHash('sha256').update('AyandaTicket 42, please go to Desk 2.').digest('hex');
+    expect(s3.commandCalls(HeadObjectCommand)[0]?.args[0].input.Key).toBe(`voice/${hash}.mp3`);
+    expect(console.log).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(vi.mocked(console.log).mock.calls[0]?.[0] as string)).toEqual({ action: 'speak', what: 'call', chars: 'Ticket 42, please go to Desk 2.'.length, cached: true, latencyMs: 0, outcome: 'ok' });
+  });
+  it.each(['waiting', 'serving', 'done', 'left', 'no_show'] as const)('refuses a call for %s', async status => {
+    ticket.status = status;
+    expect(await run(call())).toMatchObject({ code: 'bad_ticket' });
+    expect(s3.calls()).toHaveLength(0);
+  });
+  it('refuses a call without a desk', async () => {
+    delete ticket.desk;
+    expect(await run(call())).toMatchObject({ code: 'bad_ticket' });
+  });
+  it('only looks for tickets in the connection office', async () => {
+    db.on(QueryCommand).callsFake(input => {
+      expect(input.ExpressionAttributeValues[':pk']).toBe('OFFICE#clinic');
+      return { Items: [] };
+    });
+    expect(await run(call())).toMatchObject({ code: 'bad_ticket' });
+  });
+  it('requires the answer secret before reserving', async () => {
+    expect(await run({ ...answer(), secret: randomUUID() })).toMatchObject({ code: 'bad_ticket' });
+    expect(db.commandCalls(UpdateCommand)).toHaveLength(0);
+  });
+  it.each(['done', 'left', 'no_show'] as const)('refuses answers for %s', async status => {
+    ticket.status = status;
+    expect(await run(answer())).toMatchObject({ code: 'bad_ticket' });
+  });
+  it('counts a cached answer against the ticket allowance', async () => {
+    expect(await run(answer())).toMatchObject({ type: 'speech', what: 'answer' });
+    expect(db.commandCalls(UpdateCommand)[0]?.args[0].input).toMatchObject({ UpdateExpression: 'ADD speaks :one', ExpressionAttributeValues: { ':max': 20 } });
+  });
+  it('reports the answer limit without synthesising', async () => {
+    db.on(UpdateCommand).rejects(condition());
+    expect(await run(answer())).toMatchObject({ code: 'voice_unavailable' });
+    expect(s3.calls()).toHaveLength(0);
+  });
+  it.each(['Polly', 'head', 'put'])('refunds an answer after %s failure', async failure => {
+    s3.on(HeadObjectCommand).rejects(Object.assign(new Error('missing'), { name: 'NotFound' }));
+    if (failure === 'Polly') polly.on(SynthesizeSpeechCommand).rejects(new Error('unavailable'));
+    if (failure === 'head') s3.on(HeadObjectCommand).rejects(new Error('denied'));
+    if (failure === 'put') s3.on(PutObjectCommand).rejects(new Error('unavailable'));
+    expect(await run(answer())).toMatchObject({ code: 'voice_unavailable' });
+    expect(db.commandCalls(UpdateCommand)[1]?.args[0].input).toMatchObject({ UpdateExpression: 'ADD speaks :minus' });
+  });
 });

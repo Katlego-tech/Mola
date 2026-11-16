@@ -7,6 +7,10 @@ import { AskSheet, type AskSheetHandle } from '../src/patron/AskSheet';
 
 beforeEach(() => localStorage.clear());
 afterEach(cleanup);
+function English() {
+  const { setLang } = useT();
+  return <button onClick={() => setLang('en')}>English</button>;
+}
 function Switch() {
   const { setLang } = useT();
   return <button onClick={() => setLang('zu')}>Switch</button>;
@@ -65,4 +69,30 @@ it('ignores notes for a superseded language and accepts only the English fallbac
   expect(screen.queryByText('Other language')).toBeNull();
   act(() => ref.current?.receive({ type: 'notes', lang: 'zu', version: 3, text: 'Current language', translated: true }));
   expect(screen.getByText('Current language')).toBeTruthy();
+});
+
+
+it('offers Listen for English answers and keeps it after a language switch', () => {
+  const ref = createRef<AskSheetHandle>();
+  render(<LangProvider catalogs={{ en, zu: {} }}><Switch /><AskSheet ref={ref} online notesVersion={0} onNotes={vi.fn()} onAsk={vi.fn()} /></LangProvider>);
+  act(() => ref.current?.open());
+  fireEvent.change(screen.getByLabelText('Your question'), { target: { value: 'Bring ID?' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Ask' }));
+  act(() => ref.current?.receive({ type: 'answer', question: 'Bring ID?', found: true, answer: 'Bring ID.', asksLeft: 9 }));
+  expect(screen.getByRole('button', { name: 'Listen' })).toBeTruthy();
+  fireEvent.click(screen.getByText('Switch'));
+  expect(screen.getByRole('button', { name: 'Listen' })).toBeTruthy();
+});
+
+it('hides Listen for an Afrikaans answer even after switching to English', () => {
+  localStorage.setItem('mola:lang', 'af');
+  const ref = createRef<AskSheetHandle>();
+  render(<LangProvider><English /><AskSheet ref={ref} online notesVersion={0} onNotes={vi.fn()} onAsk={vi.fn()} /></LangProvider>);
+  act(() => ref.current?.open());
+  fireEvent.change(screen.getByLabelText('Jou vraag'), { target: { value: 'ID?' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Vra' }));
+  act(() => ref.current?.receive({ type: 'answer', question: 'ID?', found: true, answer: 'Bring ID.', asksLeft: 9 }));
+  expect(screen.queryByRole('button', { name: 'Luister' })).toBeNull();
+  fireEvent.click(screen.getByText('English'));
+  expect(screen.queryByRole('button', { name: 'Listen' })).toBeNull();
 });

@@ -1,4 +1,4 @@
-import { X } from '@phosphor-icons/react';
+import { SpeakerHigh, X } from '@phosphor-icons/react';
 import { Dialog } from 'radix-ui';
 import { useEffect, useImperativeHandle, useRef, useState, type Ref } from 'react';
 import { Button } from '@/components/ui/button';
@@ -9,7 +9,7 @@ import { cn } from '@/lib/utils';
 
 type Notes = Extract<ServerMessage, { type: 'notes' }>;
 type Answer = Extract<ServerMessage, { type: 'answer' }>;
-type Entry = { question: string; reply?: Answer | 'ask_limit' | 'assist_unavailable' };
+type Entry = { question: string; lang: Lang; playFailed?: boolean; reply?: Answer | 'ask_limit' | 'assist_unavailable' };
 export interface AskSheetHandle {
   open(): void;
   interrupt(): void;
@@ -17,12 +17,13 @@ export interface AskSheetHandle {
   receive(message: ServerMessage): void;
 }
 
-export function AskSheet({ ref, online, notesVersion, onNotes, onAsk }: {
+export function AskSheet({ ref, online, notesVersion, onNotes, onAsk, onListen }: {
   ref: Ref<AskSheetHandle>;
   online: boolean;
   notesVersion: number;
   onNotes(lang: Lang): void;
   onAsk(question: string, lang: Lang): void;
+  onListen?(text: string, failed: () => void): void;
 }) {
   const { t, lang } = useT();
   const [open, setOpen] = useState(false);
@@ -31,6 +32,7 @@ export function AskSheet({ ref, online, notesVersion, onNotes, onAsk }: {
   const [question, setQuestion] = useState('');
   const [pending, setPending] = useState(false);
   const inFlight = useRef(false);
+  const answerLang = useRef<Lang>(lang);
   const [limited, setLimited] = useState(false);
   const [asksLeft, setAsksLeft] = useState<number | null>(null);
   const requested = useRef<string | null>(null);
@@ -68,7 +70,7 @@ export function AskSheet({ ref, online, notesVersion, onNotes, onAsk }: {
         setNotes(message);
       }
       if (message.type === 'answer' && inFlight.current) {
-        setEntries((all) => [...all.slice(0, -1), { question: message.question, reply: message }]);
+        setEntries((all) => [...all.slice(0, -1), { question: message.question, lang: answerLang.current, reply: message }]);
         setAsksLeft(message.asksLeft);
         inFlight.current = false;
         setPending(false);
@@ -125,6 +127,17 @@ export function AskSheet({ ref, online, notesVersion, onNotes, onAsk }: {
                       <span className="mb-1.5 block text-[0.875rem] font-bold text-muted">{t('answerLabel')}</span>
                       <p className="whitespace-pre-line">{entry.reply.answer}</p>
                       <p className="mt-2 text-[0.875rem] text-muted">{t('answerBy')}</p>
+                      {entry.lang === 'en' && <>
+                        <Button type="button" variant="quiet" disabled={!online} className="mt-2 min-h-9 px-3 text-[0.875rem]" onClick={() => {
+                          const text = typeof entry.reply === 'object' ? entry.reply.answer : null;
+                          if (!text) return;
+                          setEntries(all => all.map((item, i) => i === index ? { ...item, playFailed: false } : item));
+                          const failed = () => setEntries(all => all.map((item, i) => i === index ? { ...item, playFailed: true } : item));
+                          if (onListen) onListen(text, failed);
+                          else failed();
+                        }}><SpeakerHigh weight="bold" aria-hidden />{t('listen')}</Button>
+                        {entry.playFailed && <p role="alert" className="mt-1 text-[0.875rem] text-muted">{t('playFailed')}</p>}
+                      </>}
                     </> : <p>{t('answerNotFound')}</p>}
                   </div>}
                 </div>
@@ -136,8 +149,9 @@ export function AskSheet({ ref, online, notesVersion, onNotes, onAsk }: {
             const trimmed = question.trim();
             if (!online || inFlight.current || limited || !trimmed || trimmed.length > 300) return;
             inFlight.current = true;
+            answerLang.current = lang;
             setPending(true);
-            setEntries((all) => [...all, { question: trimmed }]);
+            setEntries((all) => [...all, { question: trimmed, lang }]);
             setQuestion('');
             onAsk(trimmed, lang);
           }}>

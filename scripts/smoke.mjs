@@ -2,7 +2,7 @@
 // Drives a deployed Mola stack end to end over its WebSocket, as a screen and patrons do.
 //
 //   node scripts/smoke.mjs --url wss://<api>.execute-api.<region>.amazonaws.com/prod
-//        [--office smoke-<time>] --staff-key KEY [--desk "Desk 1"] [--timeout] [--assist]
+//        [--office smoke-<time>] --staff-key KEY [--desk "Desk 1"] [--timeout] [--assist] [--site https://...]
 //
 // A screen watches, two patrons join (positions 1 and 2), one drops its
 // connection and resumes the same ticket. The desk calls the first patron,
@@ -21,7 +21,7 @@ const args = Object.fromEntries(
   }, []),
 );
 if (!args.url || typeof args['staff-key'] !== 'string') {
-  console.error('usage: node scripts/smoke.mjs --url wss://... [--office id] --staff-key KEY [--desk "Desk 1"] [--timeout] [--assist]');
+  console.error('usage: node scripts/smoke.mjs --url wss://... [--office id] --staff-key KEY [--desk "Desk 1"] [--timeout] [--assist] [--site https://...]');
   process.exit(2);
 }
 const office = args.office ?? `smoke-${Date.now().toString(36)}`;
@@ -112,6 +112,26 @@ if (args['staff-key']) {
   const called = await a2.next((m) => statusOf(ta.ticketNo, 'called')(m) && m.ticket.deadline !== null, 'patron A called with a deadline', 20_000);
   if (called.ticket.desk !== desk) fail(`patron A should be called to ${desk}`);
   ok(`the desk calls patron A to ${desk}`);
+
+  if (args.assist) {
+    screen.send({ action: 'speak', what: 'call', ticketNo: ta.ticketNo });
+    const speech = await screen.next((m) => m.type === 'speech' || m.type === 'error', 'called-ticket speech', 60_000);
+    if (speech.type === 'error' || speech.what !== 'call' || speech.ticketNo !== ta.ticketNo
+      || !/^\/voice\/[a-f0-9]{64}\.mp3$/.test(speech.url)) fail('called-ticket speech was not returned');
+    ok('assist returns audio for the called ticket');
+    if (typeof args.site === 'string') {
+      const siteUrl = args.site.replace(/\/$/, '');
+      if (new URL(siteUrl).protocol !== 'https:') fail('--site must use HTTPS');
+      const response = await fetch(`${siteUrl}${speech.url}`);
+      if (response.status !== 200 || response.headers.get('content-type')?.split(';')[0] !== 'audio/mpeg') {
+        fail(`speech fetch returned ${response.status} ${response.headers.get('content-type')}`);
+      }
+      await response.arrayBuffer();
+      ok('the site serves called-ticket audio as audio/mpeg');
+    } else {
+      console.log('     speech URL fetch skipped: provide --site https://... to check delivery');
+    }
+  }
 
   a2.send({ action: 'confirm', ticketNo: ta.ticketNo, secret: ta.secret });
   await a2.next(statusOf(ta.ticketNo, 'serving'), 'patron A serving');

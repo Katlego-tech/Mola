@@ -2,6 +2,10 @@ AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
 Description: Mola - a virtual queue for walk-in offices with per-office FIFO snapshot broadcasts. SQS polling can incur idle requests.
 
+Metadata:
+  AWSToolsMetrics:
+    AWSAgentToolkit: aws-cloudformation@3
+
 Parameters:
   ConfirmWindowSeconds:
     Type: Number
@@ -39,6 +43,10 @@ Parameters:
     Type: String
     Default: amazon.nova-2-lite-v1:0
     Description: Foundation model used through its global inference profile.
+  VoiceId:
+    Type: String
+    Default: Ayanda
+    Description: Amazon Polly voice for English announcements.
   OfficeTimeZone:
     Type: String
     Default: Africa/Johannesburg
@@ -205,6 +213,12 @@ Resources:
       RouteKey: $default
       Target: !Sub integrations/${ClientIntegration}
 
+  SpeakRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref WebSocketApi
+      RouteKey: speak
+      Target: !Sub integrations/${AssistIntegration}
   AskRoute:
     Type: AWS::ApiGatewayV2::Route
     Properties:
@@ -232,7 +246,7 @@ Resources:
 
   ProdStage:
     Type: AWS::ApiGatewayV2::Stage
-    DependsOn: [ConnectRoute, DisconnectRoute, WatchRoute, PingRoute, JoinRoute, ResumeRoute, ConfirmRoute, LeaveRoute, CallNextRoute, DefaultRoute, AskRoute, NotesRoute, DaySummaryRoute, SaveNotesRoute]
+    DependsOn: [ConnectRoute, DisconnectRoute, WatchRoute, PingRoute, JoinRoute, ResumeRoute, ConfirmRoute, LeaveRoute, CallNextRoute, DefaultRoute, AskRoute, NotesRoute, DaySummaryRoute, SaveNotesRoute, SpeakRoute]
     Properties:
       ApiId: !Ref WebSocketApi
       StageName: prod
@@ -400,6 +414,8 @@ Resources:
       Timeout: 20
       Environment:
         Variables:
+          VOICE_BUCKET: !Ref WebBucket
+          VOICE_ID: !Ref VoiceId
           NOVA_REGION: !Ref NovaRegion
           NOVA_MODEL_ID: !Sub global.${NovaFoundationModel}
           OFFICE_TIME_ZONE: !Ref OfficeTimeZone
@@ -412,6 +428,20 @@ Resources:
             - Effect: Allow
               Action: execute-api:ManageConnections
               Resource: !Sub arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${WebSocketApi}/prod/POST/@connections/*
+            # Synthesis accepts no resource type; Polly only supports lexicon resource ARNs.
+            - Effect: Allow
+              Action: polly:SynthesizeSpeech
+              Resource: '*'
+            - Effect: Allow
+              Action: [s3:PutObject, s3:GetObject]
+              Resource: !Sub ${WebBucket.Arn}/voice/*
+            # HeadObject needs ListBucket to distinguish a missing cached object from denial.
+            - Effect: Allow
+              Action: s3:ListBucket
+              Resource: !GetAtt WebBucket.Arn
+              Condition:
+                StringLike:
+                  s3:prefix: voice/*
             - Effect: Allow
               Action: bedrock:InvokeModel
               Resource: !Sub arn:${AWS::Partition}:bedrock:${NovaRegion}:${AWS::AccountId}:inference-profile/global.${NovaFoundationModel}
@@ -628,6 +658,13 @@ Resources:
   WebBucket:
     Type: AWS::S3::Bucket
     Properties:
+      # Audio is content-addressed and can be regenerated after a day; web assets do not expire.
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireVoice
+            Status: Enabled
+            Prefix: voice/
+            ExpirationInDays: 1
       PublicAccessBlockConfiguration:
         BlockPublicAcls: true
         BlockPublicPolicy: true

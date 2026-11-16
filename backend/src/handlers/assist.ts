@@ -1,6 +1,6 @@
 import type { ClientEvent } from './client';
-import { MAX_ASKS_PER_TICKET, officeTimeZone } from '../lib/config';
-import { getConnection, getNotes, getNotesTranslation, loadOffice, putNotesTranslation, refundAsk, reserveAsk } from '../lib/db';
+import { MAX_ASKS_PER_TICKET, MAX_SPEAKS_PER_TICKET, officeTimeZone } from '../lib/config';
+import { getConnection, getNotes, getNotesTranslation, loadOffice, putNotesTranslation, refundAsk, reserveAsk, refundSpeak, reserveSpeak } from '../lib/db';
 import { groundedNumbers, sameNumbers } from '../lib/grounding';
 import { parseClientMessage } from '../lib/messages';
 import { ACTIVE } from '../lib/model';
@@ -10,6 +10,7 @@ import { OK, replyError } from '../lib/reply';
 import { verifySecret } from '../lib/secret';
 import { verifyStaffKey } from '../lib/staff-key';
 import { dayStats } from '../lib/stats';
+import { speechUrl } from '../lib/voice';
 import { send } from '../lib/ws';
 
 export async function handler(event: ClientEvent) {
@@ -26,6 +27,39 @@ export async function handler(event: ClientEvent) {
       return OK;
     }
     switch (msg.action) {
+      case 'speak': {
+        const start = Date.now();
+        let chars = 0;
+        let cached = false;
+        let outcome = 'bad_ticket';
+        let reserved = false;
+        try {
+          const snapshot = await loadOffice(conn.officeId);
+          const ticket = snapshot.tickets.find(ticket => ticket.ticketNo === msg.ticketNo);
+          if (!ticket || (msg.what === 'call'
+            ? ticket.status !== 'called' || !ticket.desk
+            : !verifySecret(msg.secret, ticket.secretHash) || !ACTIVE.has(ticket.status))) {
+            await replyError(connectionId, 'bad_ticket');
+            return OK;
+          }
+          const text = msg.what === 'call' ? `Ticket ${ticket.ticketNo}, please go to ${ticket.desk}.` : msg.text;
+          chars = text.length;
+          if (msg.what === 'answer') {
+            await reserveSpeak(conn.officeId, msg.ticketNo, MAX_SPEAKS_PER_TICKET);
+            reserved = true;
+          }
+          const url = await speechUrl(text, hit => { cached = hit; });
+          outcome = 'ok';
+          await send(connectionId, { type: 'speech', what: msg.what, ticketNo: msg.ticketNo, url });
+        } catch {
+          outcome = 'voice_unavailable';
+          if (reserved) await refundSpeak(conn.officeId, msg.ticketNo).catch(() => undefined);
+          await replyError(connectionId, 'voice_unavailable');
+        } finally {
+          console.log(JSON.stringify({ action: 'speak', what: msg.what, chars, cached, latencyMs: Date.now() - start, outcome }));
+        }
+        return OK;
+      }
       case 'ask': {
         const snapshot = await loadOffice(conn.officeId);
         const ticket = snapshot.tickets.find(ticket => ticket.ticketNo === msg.ticketNo);
