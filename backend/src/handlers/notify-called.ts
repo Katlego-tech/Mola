@@ -1,5 +1,4 @@
-import { broadcast } from '../lib/broadcast';
-import { rules } from '../lib/config';
+import { requestBroadcast } from '../lib/broadcast';
 import { storeTaskToken } from '../lib/db';
 import type { CallInput } from '../lib/sfn';
 import { failTask } from '../lib/sfn';
@@ -18,5 +17,5 @@ export async function handler(e: NotifyCalledEvent): Promise<void> {
     await failTask(taskToken, 'Patron.Left', 'Ticket is no longer being called');
     return;
   }
-  await broadcast(officeId, rules());
+  await requestBroadcast(officeId);
 }

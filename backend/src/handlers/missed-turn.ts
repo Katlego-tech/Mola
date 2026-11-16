@@ -1,4 +1,4 @@
-import { broadcast } from '../lib/broadcast';
+import { requestBroadcast } from '../lib/broadcast';
 import { callNext } from '../lib/calling';
 import { rules } from '../lib/config';
 import { dropBack, loadOffice, markLeft, markNoShow, revertClaim } from '../lib/db';
@@ -57,5 +57,5 @@ export async function handler(e: MissedTurnEvent): Promise<void> {
     }
   }
   if (e.reason !== 'error') await callNext(e.officeId, e.desk);
-  await broadcast(e.officeId, rules());
+  await requestBroadcast(e.officeId);
 }

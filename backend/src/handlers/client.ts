@@ -1,4 +1,4 @@
-import { broadcast } from '../lib/broadcast';
+import { requestBroadcast } from '../lib/broadcast';
 import { rules, ticketLifetimeSeconds } from '../lib/config';
 import { bindTicketConnection, finishServing, getConnection, loadOffice, markLeft, markServing, nextTicketNo, putScreen, putTicket, setConnectionTicket } from '../lib/db';
 import { parseClientMessage } from '../lib/messages';
@@ -63,7 +63,7 @@ export async function handler(event: ClientEvent) {
           }
         }
       } finally {
-        await broadcast(conn.officeId, rules());
+        await requestBroadcast(conn.officeId);
       }
       return OK;
     }
@@ -113,7 +113,7 @@ export async function handler(event: ClientEvent) {
       } catch (error) {
         if (!(error instanceof Error && error.name === 'ConditionalCheckFailedException')) throw error;
       }
-      await broadcast(conn.officeId, rules());
+      await requestBroadcast(conn.officeId);
       return OK;
     }
     case 'leave': {
@@ -140,7 +140,7 @@ export async function handler(event: ClientEvent) {
       } catch (error) {
         if (!(error instanceof Error && error.name === 'ConditionalCheckFailedException')) throw error;
       }
-      await broadcast(conn.officeId, rules());
+      await requestBroadcast(conn.officeId);
       return OK;
     }
     case 'watch': {

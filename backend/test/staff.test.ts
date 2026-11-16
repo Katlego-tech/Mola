@@ -1,21 +1,20 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { handler } from '../src/handlers/staff';
-import { broadcast } from '../src/lib/broadcast';
+import { requestBroadcast } from '../src/lib/broadcast';
 import { callNext } from '../src/lib/calling';
 import { getConnection, saveNotes } from '../src/lib/db';
 import { send } from '../src/lib/ws';
 
 vi.mock('../src/lib/db', () => ({ getConnection: vi.fn(), saveNotes: vi.fn() }));
 vi.mock('../src/lib/calling', () => ({ callNext: vi.fn() }));
-vi.mock('../src/lib/broadcast', () => ({ broadcast: vi.fn() }));
+vi.mock('../src/lib/broadcast', () => ({ requestBroadcast: vi.fn() }));
 vi.mock('../src/lib/ws', () => ({ send: vi.fn() }));
 
 let staffKey: string;
 const event = (body?: string | null) => ({ requestContext: { routeKey: 'callNext', connectionId: 'c-9' }, body });
 const message = () => JSON.stringify({ action: 'callNext', desk: 'Desk 1', staffKey });
 const screen = { connectionId: 'c-9', officeId: 'demo', role: 'screen', expiresAt: 5 } as const;
-const configuredRules = { confirmWindowSeconds: 30, dropBackPlaces: 3, maxMisses: 2 };
 
 beforeEach(() => {
   vi.resetAllMocks();
@@ -27,7 +26,7 @@ beforeEach(() => {
   vi.mocked(getConnection).mockResolvedValue(screen);
   vi.mocked(callNext).mockResolvedValue({ called: 42 });
   vi.mocked(send).mockResolvedValue('sent');
-  vi.mocked(broadcast).mockResolvedValue(undefined);
+  vi.mocked(requestBroadcast).mockResolvedValue(undefined);
 });
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 
@@ -35,7 +34,7 @@ async function expectError(body: string | null | undefined, code: string): Promi
   await expect(handler(event(body))).resolves.toEqual({ statusCode: 200 });
   expect(send).toHaveBeenCalledExactlyOnceWith('c-9', expect.objectContaining({ type: 'error', code }));
   expect(callNext).not.toHaveBeenCalled();
-  expect(broadcast).not.toHaveBeenCalled();
+  expect(requestBroadcast).not.toHaveBeenCalled();
 }
 
 describe('staff refusals', () => {
@@ -90,34 +89,34 @@ describe('staff callNext', () => {
     expect(getConnection).toHaveBeenCalledExactlyOnceWith('c-9');
     expect(callNext).toHaveBeenCalledExactlyOnceWith('demo', 'Desk 1');
     expect(send).not.toHaveBeenCalled();
-    expect(broadcast).not.toHaveBeenCalled();
+    expect(requestBroadcast).not.toHaveBeenCalled();
   });
 
-  it('reports a busy desk without broadcasting', async () => {
+  it('reports a busy desk without requesting a refresh', async () => {
     vi.mocked(callNext).mockResolvedValue({ busy: true });
     await expect(handler(event(message()))).resolves.toEqual({ statusCode: 200 });
     expect(send).toHaveBeenCalledExactlyOnceWith('c-9', expect.objectContaining({ type: 'error', code: 'desk_busy' }));
-    expect(broadcast).not.toHaveBeenCalled();
+    expect(requestBroadcast).not.toHaveBeenCalled();
   });
 
-  it('sends queue_empty before broadcasting with the current rules', async () => {
+  it('sends queue_empty before requesting a refresh', async () => {
     vi.mocked(callNext).mockResolvedValue({ empty: true });
-    vi.mocked(broadcast).mockImplementation(() => {
+    vi.mocked(requestBroadcast).mockImplementation(() => {
       expect(send).toHaveBeenCalledExactlyOnceWith('c-9', { type: 'notice', code: 'queue_empty' });
       return Promise.resolve();
     });
     await expect(handler(event(message()))).resolves.toEqual({ statusCode: 200 });
-    expect(broadcast).toHaveBeenCalledExactlyOnceWith('demo', configuredRules);
+    expect(requestBroadcast).toHaveBeenCalledExactlyOnceWith('demo');
   });
 
-  it.each(['session', 'call', 'notice', 'broadcast'] as const)('logs a thrown %s error and replies internal', async stage => {
+  it.each(['session', 'call', 'notice', 'requestBroadcast'] as const)('logs a thrown %s error and replies internal', async stage => {
     const error = new Error(`${stage} failed`);
     const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     if (stage === 'session') vi.mocked(getConnection).mockRejectedValue(error);
     if (stage === 'call') vi.mocked(callNext).mockRejectedValue(error);
-    if (stage === 'notice' || stage === 'broadcast') vi.mocked(callNext).mockResolvedValue({ empty: true });
+    if (stage === 'notice' || stage === 'requestBroadcast') vi.mocked(callNext).mockResolvedValue({ empty: true });
     if (stage === 'notice') vi.mocked(send).mockRejectedValueOnce(error);
-    if (stage === 'broadcast') vi.mocked(broadcast).mockRejectedValue(error);
+    if (stage === 'requestBroadcast') vi.mocked(requestBroadcast).mockRejectedValue(error);
     await expect(handler(event(message()))).resolves.toEqual({ statusCode: 200 });
     expect(log).toHaveBeenCalledWith(expect.any(String), error);
     expect(send).toHaveBeenLastCalledWith('c-9', expect.objectContaining({ type: 'error', code: 'internal' }));
@@ -127,17 +126,17 @@ describe('staff callNext', () => {
 
 describe('saving office notes', () => {
   const save = () => JSON.stringify({ action: 'saveNotes', text: 'Bring ID', baseVersion: 3, staffKey });
-  it('sends the new notes before broadcasting the updated board', async () => {
+  it('sends the new notes before requesting a refresh the updated board', async () => {
     vi.mocked(saveNotes).mockResolvedValue(4);
-    vi.mocked(broadcast).mockImplementation(() => {
+    vi.mocked(requestBroadcast).mockImplementation(() => {
       expect(send).toHaveBeenCalledWith('c-9', { type: 'notes', lang: 'en', version: 4, text: 'Bring ID', translated: false });
       return Promise.resolve();
     });
     await handler(event(save()));
     expect(saveNotes).toHaveBeenCalledExactlyOnceWith('demo', 'Bring ID', 3, expect.any(String));
-    expect(broadcast).toHaveBeenCalledWith('demo', configuredRules);
+    expect(requestBroadcast).toHaveBeenCalledWith('demo');
   });
-  it('reports a stale base without broadcasting', async () => {
+  it('reports a stale base without requesting a refresh', async () => {
     vi.mocked(saveNotes).mockRejectedValue(Object.assign(new Error('stale'), { name: 'TransactionCanceledException' }));
     await expectError(save(), 'notes_conflict');
   });

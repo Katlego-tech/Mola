@@ -6,7 +6,7 @@ import type { OfficeSnapshot, Ticket, TicketStatus } from '../src/lib/model';
 
 const db = vi.hoisted(() => ({ getConnection: vi.fn(), loadOffice: vi.fn(), markServing: vi.fn() }));
 const ws = vi.hoisted(() => ({ send: vi.fn() }));
-const fanout = vi.hoisted(() => ({ broadcast: vi.fn() }));
+const fanout = vi.hoisted(() => ({ requestBroadcast: vi.fn() }));
 vi.mock('../src/lib/db', () => db);
 vi.mock('../src/lib/ws', () => ws);
 vi.mock('../src/lib/broadcast', () => fanout);
@@ -44,19 +44,19 @@ afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); });
 function expectNoMutation() {
   expect(sfn.calls()).toHaveLength(0);
   expect(db.markServing).not.toHaveBeenCalled();
-  expect(fanout.broadcast).not.toHaveBeenCalled();
+  expect(fanout.requestBroadcast).not.toHaveBeenCalled();
 }
 
 describe('confirm', () => {
-  it('succeeds the task with confirmedAt, marks serving, then broadcasts', async () => {
+  it('succeeds the task with confirmedAt, marks serving, then requests a refresh', async () => {
     expect(await handler(event())).toEqual({ statusCode: 200 });
     expect(db.loadOffice).toHaveBeenCalledExactlyOnceWith('demo');
     expect(sfn.commandCalls(SendTaskSuccessCommand).map(call => call.args[0].input)).toEqual([
       { taskToken: ticket.taskToken, output: JSON.stringify({ confirmedAt: new Date(now).toISOString() }) },
     ]);
     expect(db.markServing).toHaveBeenCalledExactlyOnceWith('demo', 42, new Date(now).toISOString());
-    expect(db.markServing).toHaveBeenCalledBefore(fanout.broadcast);
-    expect(fanout.broadcast).toHaveBeenCalledExactlyOnceWith('demo', officeRules);
+    expect(db.markServing).toHaveBeenCalledBefore(fanout.requestBroadcast);
+    expect(fanout.requestBroadcast).toHaveBeenCalledExactlyOnceWith('demo');
     expect(ws.send).not.toHaveBeenCalled();
   });
 
@@ -65,7 +65,7 @@ describe('confirm', () => {
     await handler(event());
     expect(ws.send).toHaveBeenCalledExactlyOnceWith('phone', { type: 'notice', code: 'too_late', ticketNo: 42 });
     expect(db.markServing).not.toHaveBeenCalled();
-    expect(fanout.broadcast).not.toHaveBeenCalled();
+    expect(fanout.requestBroadcast).not.toHaveBeenCalled();
   });
 
   it.each(['missing', 'wrong secret'])('refuses a %s ticket', async kind => {
@@ -101,10 +101,10 @@ describe('confirm', () => {
     expectNoMutation();
   });
 
-  it('ignores a markServing conditional failure and broadcasts', async () => {
+  it('ignores a markServing conditional failure and requests a refresh', async () => {
     db.markServing.mockRejectedValue(Object.assign(new Error('Race lost'), { name: 'ConditionalCheckFailedException' }));
     await handler(event());
-    expect(fanout.broadcast).toHaveBeenCalledExactlyOnceWith('demo', officeRules);
+    expect(fanout.requestBroadcast).toHaveBeenCalledExactlyOnceWith('demo');
   });
 
   it('waits for task success before marking serving', async () => {
@@ -118,13 +118,13 @@ describe('confirm', () => {
     expect(db.markServing).toHaveBeenCalledOnce();
   });
 
-  it.each(['task', 'write', 'load', 'broadcast'])('propagates other %s errors', async source => {
+  it.each(['task', 'write', 'load', 'requestBroadcast'])('propagates other %s errors', async source => {
     const error = new Error('Unavailable');
     if (source === 'task') sfn.on(SendTaskSuccessCommand).rejects(error);
     if (source === 'write') db.markServing.mockRejectedValue(error);
     if (source === 'load') db.loadOffice.mockRejectedValue(error);
-    if (source === 'broadcast') fanout.broadcast.mockRejectedValue(error);
+    if (source === 'requestBroadcast') fanout.requestBroadcast.mockRejectedValue(error);
     await expect(handler(event())).rejects.toBe(error);
-    if (source !== 'broadcast') expect(fanout.broadcast).not.toHaveBeenCalled();
+    if (source !== 'requestBroadcast') expect(fanout.requestBroadcast).not.toHaveBeenCalled();
   });
 });
