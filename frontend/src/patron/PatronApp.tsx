@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { LangProvider, useT } from '@/i18n';
 import { buzz, chime, holdWakeLock, unlockSound } from '@/lib/alerts';
 import type { Board, TicketView } from '@/lib/messages';
 import { forgetTicket, loadTicket, saveTicket, type StoredTicket } from '@/lib/storedTicket';
@@ -11,6 +12,7 @@ const CLOSED = new Set(['done', 'left', 'no_show']);
 const STALE_MS = 60_000;
 
 function PatronSession({ officeId }: { officeId: string }) {
+  const { t } = useT();
   const [stored, setStored] = useState<StoredTicket | null>(() => loadTicket(officeId));
   const storedRef = useRef(stored);
   const [view, setView] = useState<{ ticket: TicketView; board: Board; receivedAt: number } | null>(null);
@@ -148,7 +150,7 @@ function PatronSession({ officeId }: { officeId: string }) {
       joining={joining}
       tooLate={tooLate}
       lastUpdateAt={lastUpdateAt}
-      failure={failure}
+      failure={failure ? t('internalError') : null}
       onJoin={() => {
         unlockSound();
         setFailure(null);
@@ -170,15 +172,20 @@ function PatronSession({ officeId }: { officeId: string }) {
   );
 }
 
-export function PatronApp() {
+function PatronEntry() {
+  const { t } = useT();
   const officeId = new URLSearchParams(window.location.search).get('office') ?? '';
   if (!OFFICE_ID.test(officeId)) {
     return (
       <div className="mx-auto grid min-h-dvh max-w-[480px] content-center gap-3.5 px-5">
-        <h1 className="text-[2.5rem] leading-[1.05] font-bold">This code isn't for an office.</h1>
-        <p className="max-w-[32ch] text-muted">Ask at reception for the Mola QR code, then scan it again.</p>
+        <h1 className="text-[2.5rem] leading-[1.05] font-bold">{t('invalidOfficeTitle')}</h1>
+        <p className="max-w-[32ch] text-muted">{t('invalidOfficeDescription')}</p>
       </div>
     );
   }
   return <PatronSession officeId={officeId} />;
+}
+
+export function PatronApp() {
+  return <LangProvider><PatronEntry /></LangProvider>;
 }
