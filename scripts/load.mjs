@@ -38,15 +38,26 @@ function connect(role) {
   });
 }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+function fail(why) {
+  console.error(`  FAILED  ${why}`);
+  process.exit(1);
+}
 
 console.log(`Load test: ${clients} phones, ${rounds} calls, office ${office}`);
 const phones = [];
 for (let i = 0; i < clients; i += 20) {
   phones.push(...(await Promise.all(Array.from({ length: Math.min(20, clients - i) }, () => connect('patron')))));
 }
-await Promise.all(phones.map((p) => new Promise((resolve) => {
-  const onTicket = (m) => { if (m.type === 'ticket') { p.listeners.delete(onTicket); resolve(); } };
-  p.listeners.add(onTicket);
+await Promise.all(phones.map((p, i) => new Promise((resolve) => {
+  const timer = setTimeout(() => fail(`phone ${i} got no ticket within 15 s`), 15_000);
+  const onReply = (m) => {
+    if (m.type === 'error') fail(`phone ${i} could not join: ${m.code}`);
+    if (m.type !== 'ticket') return;
+    clearTimeout(timer);
+    p.listeners.delete(onReply);
+    resolve();
+  };
+  p.listeners.add(onReply);
   p.send({ action: 'join' });
 })));
 console.log(`  ${phones.length} phones hold tickets`);
@@ -55,18 +66,21 @@ await sleep(2000); // let the joins' broadcasts drain before measuring
 const staff = await connect('screen');
 const samples = [];
 for (let round = 1; round <= rounds; round += 1) {
+  const desk = `Load ${round}`;
   const sentAt = performance.now();
+  // Only a status whose board shows this round's desk calling answers this call; a late status from
+  // the joins or an earlier round does not count.
   const heard = phones.map((p) => new Promise((resolve) => {
     const timer = setTimeout(() => { p.listeners.delete(on); resolve(Infinity); }, 10_000);
     function on(m) {
-      if (m.type !== 'status') return;
+      if (m.type !== 'status' || !m.board.calling.some((c) => c.desk === desk)) return;
       clearTimeout(timer);
       p.listeners.delete(on);
       resolve(performance.now() - sentAt);
     }
     p.listeners.add(on);
   }));
-  staff.send({ action: 'callNext', desk: `Load ${round}`, staffKey: args['staff-key'] });
+  staff.send({ action: 'callNext', desk, staffKey: args['staff-key'] });
   const times = await Promise.all(heard);
   samples.push(...times);
   await sleep(1500);

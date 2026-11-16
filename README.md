@@ -59,7 +59,9 @@ STAFF_KEY_HASH=$(printf %s 'choose-a-staff-key' | sha256sum | cut -d' ' -f1)
 
 # esbuild is a pinned dev dependency; SAM finds it on the PATH.
 PATH="$PWD/backend/node_modules/.bin:$PATH" sam build --config-env dev
-sam deploy --config-env dev --parameter-overrides StaffKeyHash=$STAFF_KEY_HASH
+# --parameter-overrides on the command line replaces samconfig's list, so pass them all.
+sam deploy --config-env dev --parameter-overrides \
+  ConfirmWindowSeconds=30 DropBackPlaces=3 MaxMisses=2 TicketLifetimeHours=12 StaffKeyHash=$STAFF_KEY_HASH
 
 # Build the app against the stack's WebSocket URL and publish it.
 scripts/deploy-web.sh dev
@@ -77,7 +79,7 @@ as soon as its first ticket is issued.
 ## Check it
 
 ```bash
-cd backend && npm run lint && npm test      # 375+ unit tests
+cd backend && npm run lint && npm test      # unit tests for every handler and rule
 cd frontend && npm run lint && npm test     # view and app tests against a fake socket
 
 # Against a deployed stack (WebSocket URL from the stack outputs):
