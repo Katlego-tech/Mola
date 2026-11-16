@@ -35,7 +35,7 @@ export interface Board {
   officeId: string; notesVersion: number;
   calling: { ticketNo: number; desk: string; deadline: number | null }[];
   serving: { ticketNo: number; desk: string }[];
-  waitingCount: number; upNext: number[]; serverTime: number;
+  waitingCount: number; upNext: number[]; serverTime: number; snapshotAt: number;
   rules: { confirmWindowSeconds: number; dropBackPlaces: number; maxMisses: number };
 }
 export type NoticeCode =

@@ -30,6 +30,7 @@ export function boardOf(officeId: string, s: OfficeSnapshot, nowMs: number, rule
     waitingCount: line.length,
     upNext: line.slice(0, 5).map(ticket => ticket.ticketNo),
     serverTime: nowMs,
+    snapshotAt: s.readAt,
     rules,
   };
 }

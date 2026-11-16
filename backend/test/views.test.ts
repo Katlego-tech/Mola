@@ -14,7 +14,7 @@ function ticket(ticketNo: number, overrides: Partial<Ticket> = {}): Ticket {
   };
 }
 function snapshot(tickets: Ticket[]): OfficeSnapshot {
-  return { office: null, tickets, screens: [] };
+  return { readAt: 1000, office: null, tickets, screens: [] };
 }
 
 describe('ticketView', () => {
@@ -53,7 +53,7 @@ describe('ticketView', () => {
 describe('boardOf', () => {
   it('builds an empty board with the supplied office ID when META is absent', () => {
     expect(boardOf('empty', snapshot([]), nowMs, rules)).toEqual({
-      officeId: 'empty', notesVersion: 0, calling: [], serving: [], waitingCount: 0, upNext: [], serverTime: nowMs, rules,
+      officeId: 'empty', notesVersion: 0, calling: [], serving: [], waitingCount: 0, upNext: [], snapshotAt: 1000, serverTime: nowMs, rules,
     });
   });
 
@@ -76,7 +76,7 @@ describe('boardOf', () => {
         { ticketNo: 9, desk: 'Desk 1', deadline: nowMs + 30_000 },
         { ticketNo: 10, desk: 'Desk 2', deadline: null },
       ], serving: [{ ticketNo: 11, desk: 'Desk 3' }],
-      waitingCount: 7, upNext: [2, 3, 4, 5, 6], serverTime: nowMs, rules,
+      waitingCount: 7, upNext: [2, 3, 4, 5, 6], snapshotAt: 1000, serverTime: nowMs, rules,
     });
     expect(s).toEqual(original);
   });

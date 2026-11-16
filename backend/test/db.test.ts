@@ -39,7 +39,7 @@ describe('keys and reads', () => {
     ], LastEvaluatedKey: cursor }).resolvesOnce({ Items: [
       { ...ticketKey, ...ticket }, { pk: 'OFFICE#demo', sk: 'SCREEN#s', ...screen },
     ] });
-    expect(await db.loadOffice('demo')).toEqual({ office, tickets: [ticket], screens: [screen] });
+    expect(await db.loadOffice('demo')).toEqual({ office, tickets: [ticket], screens: [screen], readAt: Date.now() });
     expect(mock.commandCalls(QueryCommand).map(call => call.args[0].input)).toEqual([
       { TableName: 'test-table', ConsistentRead: true, KeyConditionExpression: 'pk = :pk', ExpressionAttributeValues: { ':pk': 'OFFICE#demo' } },
       { TableName: 'test-table', ConsistentRead: true, KeyConditionExpression: 'pk = :pk', ExpressionAttributeValues: { ':pk': 'OFFICE#demo' }, ExclusiveStartKey: cursor },
@@ -48,7 +48,7 @@ describe('keys and reads', () => {
 
   it('follows an empty page and returns an empty snapshot for an absent office', async () => {
     mock.on(QueryCommand).resolvesOnce({ LastEvaluatedKey: ticketKey }).resolvesOnce({});
-    expect(await db.loadOffice('demo')).toEqual({ office: null, tickets: [], screens: [] });
+    expect(await db.loadOffice('demo')).toEqual({ office: null, tickets: [], screens: [], readAt: expect.any(Number) });
     expect(mock.commandCalls(QueryCommand)).toHaveLength(2);
   });
 
@@ -198,4 +198,15 @@ describe('assist persistence', () => {
       UpdateExpression: 'ADD asks :minus', ConditionExpression: 'asks > :zero',
       ExpressionAttributeValues: { ':minus': -1, ':zero': 0 } });
   });
+});
+
+
+it('timestamps the snapshot before the consistent query starts', async () => {
+  vi.useFakeTimers({ now: new Date(iso) });
+  const readAt = Date.now();
+  mock.on(QueryCommand).callsFake(() => {
+    vi.advanceTimersByTime(1000);
+    return { Items: [] };
+  });
+  expect(await db.loadOffice('demo')).toEqual({ office: null, tickets: [], screens: [], readAt });
 });

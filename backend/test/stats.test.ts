@@ -5,7 +5,7 @@ import { dayStats } from '../src/lib/stats';
 
 const now = Date.parse('2026-11-16T12:00:00Z');
 const zone = 'Africa/Johannesburg';
-const snapshot = (tickets: Ticket[]): OfficeSnapshot => ({ office: null, tickets, screens: [] });
+const snapshot = (tickets: Ticket[]): OfficeSnapshot => ({ readAt: 1000, office: null, tickets, screens: [] });
 function ticket(status: Ticket['status'], createdAt = '2026-11-16T08:00:00Z', extra: Partial<Ticket> = {}): Ticket {
   return { officeId: 'clinic', ticketNo: 1, queueKey: 1, secretHash: randomUUID(), misses: 0,
     status, createdAt, expiresAt: now / 1000 + 3600, ...extra };

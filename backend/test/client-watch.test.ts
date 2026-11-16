@@ -8,7 +8,7 @@ vi.mock('../src/lib/ws', () => ws);
 const { handler } = await import('../src/handlers/client');
 
 const event = (routeKey: string, body?: string) => ({ requestContext: { routeKey, connectionId: 'c-9' }, body });
-const empty = { office: null, tickets: [], screens: [] };
+const empty = { readAt: 1000, office: null, tickets: [], screens: [] };
 
 beforeEach(() => {
   vi.resetAllMocks();
@@ -29,7 +29,7 @@ describe('watch', () => {
       type: 'board',
       board: {
         officeId: 'demo', notesVersion: 0, calling: [], serving: [], waitingCount: 0, upNext: [],
-        serverTime: Date.parse('2027-03-01T08:00:00Z'),
+        snapshotAt: 1000, serverTime: Date.parse('2027-03-01T08:00:00Z'),
         rules: { confirmWindowSeconds: 120, dropBackPlaces: 3, maxMisses: 2 },
       },
     });

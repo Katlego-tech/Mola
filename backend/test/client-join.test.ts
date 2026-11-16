@@ -35,7 +35,7 @@ const ticket = (overrides: Partial<Ticket> = {}): Ticket => ({
   connectionId: 'old-phone', misses: 0, createdAt: new Date(now).toISOString(),
   expiresAt: Math.floor(now / 1000) + 43200, ...overrides,
 });
-const snapshot = (tickets: Ticket[] = []): OfficeSnapshot => ({ office: null, tickets, screens: [] });
+const snapshot = (tickets: Ticket[] = []): OfficeSnapshot => ({ readAt: 1000, office: null, tickets, screens: [] });
 const expectNoWrites = () => {
   expect(db.nextTicketNo).not.toHaveBeenCalled();
   expect(db.putTicket).not.toHaveBeenCalled();
@@ -187,7 +187,7 @@ describe('resume', () => {
         calling: status === 'called' ? [{ ticketNo: 42, desk: 'Desk 2', deadline: null }] : [],
         serving: status === 'serving' ? [{ ticketNo: 42, desk: 'Desk 2' }] : [],
         waitingCount: status === 'waiting' ? 2 : 1, upNext: status === 'waiting' ? [41, 42] : [41],
-        serverTime: now, rules: officeRules },
+        snapshotAt: 1000, serverTime: now, rules: officeRules },
     });
     expect(db.bindTicketConnection).toHaveBeenCalledBefore(db.setConnectionTicket);
     expect(db.setConnectionTicket).toHaveBeenCalledBefore(ws.send);

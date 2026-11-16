@@ -29,7 +29,7 @@ beforeEach(() => {
   ticket = { officeId: 'demo', ticketNo: 42, status: 'called', queueKey: 42,
     secretHash: randomUUID(), misses: 0, connectionId: 'phone', desk: 'Desk 2',
     taskToken: randomUUID(), calledAt, createdAt: nowIso, expiresAt: now / 1000 + 43200 };
-  snapshot = { office: { officeId: 'demo', ticketCounter: 48, createdAt: nowIso }, tickets: [ticket], screens: [] };
+  snapshot = { readAt: 1000, office: { officeId: 'demo', ticketCounter: 48, createdAt: nowIso }, tickets: [ticket], screens: [] };
   db.loadOffice.mockImplementation(() => Promise.resolve(snapshot));
   ws.send.mockResolvedValue('sent');
   calling.callNext.mockResolvedValue({ empty: true });

@@ -24,7 +24,7 @@ function ticket(ticketNo: number, overrides: Partial<Ticket> = {}): Ticket {
   };
 }
 function tickets(...items: Ticket[]): void {
-  vi.mocked(loadOffice).mockResolvedValue({ office: null, tickets: items, screens: [] });
+  vi.mocked(loadOffice).mockResolvedValue({ readAt: 1000, office: null, tickets: items, screens: [] });
 }
 function lostRace(): ConditionalCheckFailedException {
   return new ConditionalCheckFailedException({ message: 'race lost', $metadata: {} });

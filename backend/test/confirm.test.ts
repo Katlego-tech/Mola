@@ -20,7 +20,7 @@ const event = (suppliedSecret = secret) => ({
   requestContext: { routeKey: 'confirm', connectionId: 'phone' },
   body: JSON.stringify({ action: 'confirm', ticketNo: 42, secret: suppliedSecret }),
 });
-const snapshot = (tickets: Ticket[]): OfficeSnapshot => ({ office: null, tickets, screens: [] });
+const snapshot = (tickets: Ticket[]): OfficeSnapshot => ({ readAt: 1000, office: null, tickets, screens: [] });
 
 beforeEach(() => {
   vi.resetAllMocks();
@@ -88,7 +88,7 @@ describe('confirm', () => {
       ['phone', { type: 'status',
         ticket: { ticketNo: 42, status, position: status === 'waiting' ? 2 : null, desk: null, deadline: null, misses: 1 },
         board: { officeId: 'demo', notesVersion: 0, calling: [], serving: [], waitingCount: status === 'waiting' ? 2 : 1,
-          upNext: status === 'waiting' ? [41, 42] : [41], serverTime: now, rules: officeRules } }],
+          upNext: status === 'waiting' ? [41, 42] : [41], snapshotAt: 1000, serverTime: now, rules: officeRules } }],
     ]);
     expectNoMutation();
   });

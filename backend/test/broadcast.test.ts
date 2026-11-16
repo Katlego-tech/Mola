@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { broadcast } from '../src/lib/broadcast';
 import { deleteScreen, loadOffice, removeTicketConnection } from '../src/lib/db';
-import type { Board } from '../src/lib/messages';
+import type { Board, ServerMessage } from '../src/lib/messages';
 import type { OfficeSnapshot, Ticket } from '../src/lib/model';
 import { send } from '../src/lib/ws';
 
@@ -19,7 +19,7 @@ function ticket(ticketNo: number, overrides: Partial<Ticket> = {}): Ticket {
   };
 }
 function snapshot(tickets: Ticket[] = [], screenIds: string[] = []): OfficeSnapshot {
-  return { office: null, tickets, screens: screenIds.map(connectionId => ({
+  return { readAt: 1000, office: null, tickets, screens: screenIds.map(connectionId => ({
     officeId: 'demo', connectionId, expiresAt: nowMs / 1000 + 3600,
   })) };
 }
@@ -47,7 +47,7 @@ describe('broadcast', () => {
     expect(loadOffice).toHaveBeenCalledExactlyOnceWith('demo');
     const board: Board = {
       officeId: 'demo', notesVersion: 0, calling: [{ ticketNo: 2, desk: 'Desk 1', deadline: nowMs + 30_000 }],
-      serving: [{ ticketNo: 3, desk: 'Desk 1' }], waitingCount: 2, upNext: [7, 1], serverTime: nowMs, rules,
+      serving: [{ ticketNo: 3, desk: 'Desk 1' }], waitingCount: 2, upNext: [7, 1], snapshotAt: 1000, serverTime: nowMs, rules,
     };
     expect(send).toHaveBeenCalledTimes(8);
     for (const [i, status] of statuses.entries()) {
@@ -64,7 +64,7 @@ describe('broadcast', () => {
     vi.mocked(loadOffice).mockResolvedValue(snapshot([], ['screen']));
     await broadcast('demo', rules);
     expect(send).toHaveBeenCalledExactlyOnceWith('screen', { type: 'board', board: {
-      officeId: 'demo', notesVersion: 0, calling: [], serving: [], waitingCount: 0, upNext: [], serverTime: nowMs, rules,
+      officeId: 'demo', notesVersion: 0, calling: [], serving: [], waitingCount: 0, upNext: [], snapshotAt: 1000, serverTime: nowMs, rules,
     } });
   });
 
@@ -75,7 +75,7 @@ describe('broadcast', () => {
     })], ['screen']));
     await broadcast('demo', rules);
     expect(send).toHaveBeenCalledExactlyOnceWith('screen', { type: 'board', board: {
-      officeId: 'demo', notesVersion: 0, calling: [], serving: [], waitingCount: 0, upNext: [], serverTime: nowMs, rules,
+      officeId: 'demo', notesVersion: 0, calling: [], serving: [], waitingCount: 0, upNext: [], snapshotAt: 1000, serverTime: nowMs, rules,
     } });
     expect(removeTicketConnection).not.toHaveBeenCalled();
   });
@@ -145,4 +145,22 @@ describe('broadcast', () => {
     expect(active).toBe(0);
     expect(send).toHaveBeenCalledTimes(60);
   });
+});
+
+
+it('orders overlapping broadcasts by snapshot read time even when the older read finishes last', async () => {
+  const oldRead = Promise.withResolvers<OfficeSnapshot>();
+  vi.mocked(loadOffice).mockReturnValueOnce(oldRead.promise).mockResolvedValueOnce({
+    ...snapshot([ticket(1, { status: 'called', taskToken: randomUUID(), deadline: nowMs + 30_000 })], ['screen']), readAt: nowMs + 10,
+  });
+  const older = broadcast('demo', rules);
+  await broadcast('demo', rules);
+  vi.mocked(Date.now).mockReturnValue(nowMs + 20);
+  oldRead.resolve({ ...snapshot([ticket(1, { status: 'called' })], ['screen']), readAt: nowMs });
+  await older;
+  const messages = vi.mocked(send).mock.calls.map(([, message]) => message as ServerMessage);
+  expect(messages.map(message => 'board' in message ? message.board.snapshotAt : null))
+    .toEqual([nowMs + 10, nowMs + 10, nowMs, nowMs]);
+  expect(messages.map(message => 'board' in message ? message.board.serverTime : null))
+    .toEqual([nowMs, nowMs, nowMs + 20, nowMs + 20]);
 });
