@@ -102,9 +102,9 @@ describe('broadcast', () => {
     const error = new Error('post failed');
     vi.mocked(loadOffice).mockResolvedValue(snapshot(Array.from({ length: 30 }, (_, i) => ticket(i + 1)), ['screen']));
     vi.mocked(send).mockRejectedValueOnce(error);
-    await expect(broadcast('demo', rules)).rejects.toBeInstanceOf(AggregateError);
+    await expect(broadcast('demo', rules)).resolves.toBeUndefined();
     expect(send).toHaveBeenCalledTimes(31);
-    expect(console.error).toHaveBeenCalledWith(expect.any(String), 'phone-1', error);
+    expect(console.error).toHaveBeenCalledWith(expect.any(String), 'phone-1', error.name);
     expect(removeTicketConnection).not.toHaveBeenCalled();
     expect(deleteScreen).not.toHaveBeenCalled();
   });
@@ -115,9 +115,9 @@ describe('broadcast', () => {
     vi.mocked(send).mockResolvedValue('gone');
     if (kind === 'ticket') vi.mocked(removeTicketConnection).mockRejectedValue(error);
     else vi.mocked(deleteScreen).mockRejectedValue(error);
-    await expect(broadcast('demo', rules)).rejects.toBeInstanceOf(AggregateError);
+    await expect(broadcast('demo', rules)).resolves.toBeUndefined();
     expect(send).toHaveBeenCalledTimes(2);
-    expect(console.error).toHaveBeenCalledWith(expect.any(String), kind === 'ticket' ? 'phone-1' : 'screen', error);
+    expect(console.error).toHaveBeenCalledWith(expect.any(String), kind === 'ticket' ? 'phone-1' : 'screen', error.name);
   });
 
   it('reports and logs a snapshot read failure', async () => {
@@ -126,6 +126,31 @@ describe('broadcast', () => {
     await expect(broadcast('demo', rules)).rejects.toBe(error);
     expect(console.error).toHaveBeenCalledWith(expect.any(String), 'demo', error);
     expect(send).not.toHaveBeenCalled();
+  });
+
+  it('measures the read and send phases and counts attempted connections including failed deliveries', async () => {
+    const metrics = { readMs: 0, sendMs: 0, connections: 0 };
+    vi.mocked(loadOffice).mockImplementation(async () => {
+      vi.mocked(Date.now).mockReturnValue(nowMs + 12);
+      return snapshot([ticket(1)], ['screen']);
+    });
+    vi.mocked(send).mockImplementation(async () => {
+      vi.mocked(Date.now).mockReturnValue(nowMs + 32);
+      throw new Error('post failed');
+    });
+    await broadcast('demo', rules, metrics);
+    expect(metrics).toEqual({ readMs: 12, sendMs: 20, connections: 2 });
+  });
+
+  it('records time spent on a failed read without counting sends', async () => {
+    const metrics = { readMs: 0, sendMs: 0, connections: 0 };
+    const error = new Error('read failed');
+    vi.mocked(loadOffice).mockImplementation(async () => {
+      vi.mocked(Date.now).mockReturnValue(nowMs + 15);
+      throw error;
+    });
+    await expect(broadcast('demo', rules, metrics)).rejects.toBe(error);
+    expect(metrics).toEqual({ readMs: 15, sendMs: 0, connections: 0 });
   });
 
   it('keeps at most 25 sends in flight across phones and screens and waits for all sends', async () => {

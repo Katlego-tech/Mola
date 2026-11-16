@@ -1,6 +1,6 @@
 import type { SQSBatchResponse, SQSEvent } from 'aws-lambda';
 import { broadcast } from '../lib/broadcast';
-import type { BroadcastRequest } from '../lib/broadcast';
+import type { BroadcastMetrics, BroadcastRequest } from '../lib/broadcast';
 import { rules } from '../lib/config';
 
 function parseRequest(body: string): BroadcastRequest {
@@ -31,18 +31,24 @@ export async function handler(event: SQSEvent): Promise<SQSBatchResponse> {
     }
   }
 
-  const batchItemFailures: SQSBatchResponse['batchItemFailures'] = [];
   for (const [officeId, group] of offices) {
+    const queueLatencyMs = Date.now() - group.requestedAt;
+    const metrics: BroadcastMetrics = { readMs: 0, sendMs: 0, connections: 0 };
+    let attempts = 0;
+    for (const delayMs of [0, 100, 400]) {
+      if (delayMs) await new Promise(resolve => setTimeout(resolve, delayMs));
+      attempts++;
+      try {
+        await broadcast(officeId, rules(), metrics);
+        break;
+      } catch (error) {
+        if (attempts === 3) console.error('Queued broadcast failed', officeId, error);
+      }
+    }
     console.info({
       event: 'broadcast_queue_latency', officeId, requestedAt: group.requestedAt,
-      queueLatencyMs: Date.now() - group.requestedAt, requestCount: group.messageIds.length,
+      queueLatencyMs, requestCount: group.messageIds.length, ...metrics, attempts,
     });
-    try {
-      await broadcast(officeId, rules());
-    } catch (error) {
-      console.error('Queued broadcast failed', officeId, error);
-      batchItemFailures.push(...group.messageIds.map(itemIdentifier => ({ itemIdentifier })));
-    }
   }
-  return { batchItemFailures };
+  return { batchItemFailures: [] };
 }
