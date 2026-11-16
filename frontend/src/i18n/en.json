@@ -26,6 +26,7 @@
   "invalidOfficeDescription": "Ask at reception for the Mola QR code, then scan it again.",
   "internalError": "Something went wrong on our side. Try again.",
   "confirm": "Confirm",
+  "confirming": "Confirming…",
   "cannotCome": "I can't come. Leave the queue",
   "yourTurn": "It's your turn.",
   "goTo": "Go to",

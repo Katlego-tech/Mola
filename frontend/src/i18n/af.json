@@ -43,6 +43,7 @@
   "invalidOfficeDescription": "Vra by ontvangs vir die Mola-QR-kode en skandeer dit weer.",
   "missedDescription": "Jy het {places} plekke teruggeskuif en is steeds in die ry.",
   "confirm": "Bevestig",
+  "confirming": "Bevestig tans…",
   "aheadNone": "Jy is volgende",
   "keepOpen": "Hou hierdie bladsy oop. Jou foon vibreer wanneer dit jou beurt is.",
   "extraAhead": "+{n}",

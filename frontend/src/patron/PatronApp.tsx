@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { LangProvider, useT } from '@/i18n';
 import { buzz, chime, holdWakeLock, unlockSound } from '@/lib/alerts';
-import type { Board, TicketView } from '@/lib/messages';
+import type { Board, ClientMessage, TicketView } from '@/lib/messages';
 import { forgetTicket, loadTicket, saveTicket, type StoredTicket } from '@/lib/storedTicket';
 import { OFFICE_ID, useOfficeSocket } from '@/lib/useOfficeSocket';
 import { AskSheet, type AskSheetHandle } from './AskSheet';
@@ -19,6 +19,10 @@ function PatronSession({ officeId }: { officeId: string }) {
   const storedRef = useRef(stored);
   const [view, setView] = useState<{ ticket: TicketView; board: Board; receivedAt: number } | null>(null);
   const [joining, setJoining] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const confirmRef = useRef<{ message: Extract<ClientMessage, { action: 'confirm' }>; tries: number } | null>(null);
+  const confirmTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const statusRef = useRef<TicketView['status'] | null>(null);
   const [tooLate, setTooLate] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
   const viewRef = useRef(false);
@@ -27,6 +31,13 @@ function PatronSession({ officeId }: { officeId: string }) {
   const RESUME_RETRY_MS = 2000;
   const [lastUpdateAt, setLastUpdateAt] = useState(() => Date.now());
   const lastUpdateRef = useRef(lastUpdateAt);
+
+  const clearConfirm = () => {
+    if (confirmTimer.current !== null) clearTimeout(confirmTimer.current);
+    confirmTimer.current = null;
+    confirmRef.current = null;
+    setConfirming(false);
+  };
 
   const remember = (ticket: StoredTicket | null) => {
     storedRef.current = ticket;
@@ -37,6 +48,7 @@ function PatronSession({ officeId }: { officeId: string }) {
 
   const { state, send, reconnect } = useOfficeSocket(officeId, 'patron', {
     onOpen: (sendNow) => {
+      clearConfirm();
       // A join tapped before a drop never got its answer; let the patron tap again.
       setJoining(false);
       setFailure(null);
@@ -62,6 +74,8 @@ function PatronSession({ officeId }: { officeId: string }) {
           setTooLate(false);
           break;
         case 'status':
+          if (statusRef.current !== msg.ticket.status) clearConfirm();
+          statusRef.current = msg.ticket.status;
           viewRef.current = true;
           setFailure(null);
           setView({ ticket: msg.ticket, board: msg.board, receivedAt: at });
@@ -69,10 +83,25 @@ function PatronSession({ officeId }: { officeId: string }) {
           if (CLOSED.has(msg.ticket.status)) remember(null);
           break;
         case 'notice':
-          if (msg.code === 'too_late') setTooLate(true);
+          if (msg.code === 'too_late') {
+            clearConfirm();
+            setTooLate(true);
+          }
           break;
         case 'error':
           setJoining(false);
+          if (msg.code === 'not_called' && confirmRef.current && statusRef.current === 'called') {
+            if (confirmRef.current.tries >= 5) clearConfirm();
+            else if (confirmTimer.current === null) {
+              confirmTimer.current = setTimeout(() => {
+                confirmTimer.current = null;
+                const pending = confirmRef.current;
+                if (!pending || statusRef.current !== 'called') return;
+                pending.tries++;
+                sendRef.current?.(pending.message);
+              }, 1000);
+            }
+          }
           if (msg.code === 'internal') {
             setFailure(msg.message);
             // A resume that failed on the server would leave the page waiting forever: try again.
@@ -82,6 +111,8 @@ function PatronSession({ officeId }: { officeId: string }) {
             }
           }
           if (msg.code === 'bad_ticket') {
+            clearConfirm();
+            statusRef.current = null;
             remember(null);
             viewRef.current = false;
             setView(null);
@@ -94,9 +125,20 @@ function PatronSession({ officeId }: { officeId: string }) {
     },
   });
 
+  if (state !== 'open' && confirming) setConfirming(false);
+
   useEffect(() => {
-    if (state !== 'open') askSheet.current?.interrupt();
+    if (state !== 'open') {
+      askSheet.current?.interrupt();
+      if (confirmTimer.current !== null) clearTimeout(confirmTimer.current);
+      confirmTimer.current = null;
+      confirmRef.current = null;
+    }
   }, [state]);
+
+  useEffect(() => () => {
+    if (confirmTimer.current !== null) clearTimeout(confirmTimer.current);
+  }, []);
 
   useEffect(() => {
     sendRef.current = send;
@@ -165,6 +207,7 @@ function PatronSession({ officeId }: { officeId: string }) {
         online={state === 'open'}
         resuming={stored !== null && view === null}
         joining={joining}
+        confirming={confirming}
         tooLate={tooLate}
         lastUpdateAt={lastUpdateAt}
         failure={failure ? t('internalError') : null}
@@ -180,7 +223,11 @@ function PatronSession({ officeId }: { officeId: string }) {
         onConfirm={() => {
           unlockSound();
           const own = storedRef.current;
-          if (own) send({ action: 'confirm', ticketNo: own.ticketNo, secret: own.secret });
+          if (!own || confirmRef.current || statusRef.current !== 'called' || state !== 'open') return;
+          const message = { action: 'confirm' as const, ticketNo: own.ticketNo, secret: own.secret };
+          confirmRef.current = { message, tries: 1 };
+          setConfirming(true);
+          send(message);
         }}
         onLeave={() => {
           const own = storedRef.current;
