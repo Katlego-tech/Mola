@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import en from '../src/i18n/en.json';
+import af from '../src/i18n/af.json';
 import type { Board, TicketView } from '../src/lib/messages';
 import { LangProvider, useT } from '../src/i18n';
 import { LanguageMenu } from '../src/patron/LanguageMenu';
@@ -128,4 +129,20 @@ it('keeps every shipped catalog key and placeholder in parity with English', () 
       expect(placeholders(catalog[key] as string)).toEqual(placeholders(value));
     }
   }
+});
+
+
+it('describes audible call alerts without promising vibration', () => {
+  expect(Object.values(en).join(' ')).not.toMatch(/buzz|vibrat/i);
+  expect(en.joinDescription).toBe("Your place shows here and updates by itself. Keep your sound on: you'll hear a chime when it's your turn.");
+  expect(en.keepOpen).toBe("Keep this page open with your sound on. You'll hear a chime when it's your turn.");
+});
+
+
+it('uses the supplied Afrikaans sound and unlock copy', () => {
+  expect(Object.values(af).filter(value => typeof value === 'string').join(' ')).not.toMatch(/buzz|vibr/i);
+  expect(af.joinDescription).toBe("Jou plek wys hier en word vanself bygewerk. Hou jou klank aan: jy sal 'n klokkie hoor wanneer dit jou beurt is.");
+  expect(af.keepOpen).toBe("Hou hierdie bladsy oop met jou klank aan. Jy sal 'n klokkie hoor wanneer dit jou beurt is.");
+  expect(af.turnOnAlerts).toBe('Skakel kennisgewings aan');
+  expect(af.alertsHint).toBe("Tik een keer sodat ons 'n klank kan speel wanneer dit jou beurt is.");
 });

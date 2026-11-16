@@ -9,6 +9,11 @@ beforeEach(() => {
   vi.stubGlobal('Audio', vi.fn(function () { return audio; }));
   vi.spyOn(audio, 'play').mockResolvedValue();
   vi.spyOn(audio, 'pause').mockImplementation(() => undefined);
+  vi.stubGlobal('AudioContext', class {
+    createMediaStreamDestination() { return { stream: null }; }
+    resume() { return Promise.resolve(); }
+    close() { return Promise.resolve(); }
+  });
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
@@ -78,4 +83,22 @@ it('consumes a voice error and leaves unrelated errors for other handlers', () =
   expect(result.current.receive({ type: 'error', code: 'desk_busy', message: 'Busy.' })).toBe(false);
   expect(result.current.receive({ type: 'error', code: 'voice_unavailable', message: 'Unavailable.' })).toBe(true);
   expect(result.current.receive({ type: 'speech', what: 'call', ticketNo: 7, url: '/voice/first.mp3' })).toBe(false);
+});
+
+it('unlocks the voice element with silent playback and pauses it afterwards', async () => {
+  const player = createVoicePlayer();
+  expect(player.unlocked).toBe(false);
+  await player.unlock(vi.fn());
+  expect(audio.play).toHaveBeenCalledOnce();
+  expect(audio.pause).toHaveBeenCalledOnce();
+  expect(player.unlocked).toBe(true);
+});
+
+it('does not report rejected silent playback as unlocked', async () => {
+  vi.mocked(audio.play).mockRejectedValue(new Error('blocked'));
+  const failed = vi.fn();
+  const player = createVoicePlayer();
+  await player.unlock(failed);
+  expect(player.unlocked).toBe(false);
+  expect(failed).toHaveBeenCalledOnce();
 });

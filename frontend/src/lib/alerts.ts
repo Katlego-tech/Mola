@@ -2,15 +2,25 @@
 // goes without, and the green screen still says it.
 
 let audio: AudioContext | null = null;
+let unlocked = false;
+
+export function isSoundUnlocked(): boolean { return unlocked; }
 
 /** Called from a tap ("Get a number", or the first tap after a resume): browsers only let a page
  *  make sound after the person has touched it. */
-export function unlockSound(): void {
+export async function unlockSound(): Promise<void> {
+  if (unlocked && audio?.state === 'running') return;
   try {
     audio ??= new AudioContext();
-    void audio.resume();
+    const resumed = audio.resume();
+    const source = audio.createBufferSource();
+    source.buffer = audio.createBuffer(1, 1, audio.sampleRate);
+    source.connect(audio.destination);
+    source.start();
+    await resumed;
+    unlocked = true;
   } catch {
-    audio = null;
+    unlocked = false;
   }
 }
 

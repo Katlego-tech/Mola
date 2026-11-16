@@ -13,7 +13,7 @@ vi.mock('../src/lib/socket', () => ({
     return { send: (m: unknown) => fake.sent.push(m), close: () => undefined };
   },
 }));
-const alerts = vi.hoisted(() => ({ buzz: vi.fn(), chime: vi.fn(), unlockSound: vi.fn(), holdWakeLock: vi.fn() }));
+const alerts = vi.hoisted(() => ({ buzz: vi.fn(), chime: vi.fn(), unlockSound: vi.fn(), isSoundUnlocked: vi.fn(), holdWakeLock: vi.fn() }));
 vi.mock('../src/lib/alerts', () => alerts);
 
 const { PatronApp } = await import('../src/patron/PatronApp');
@@ -538,4 +538,77 @@ it('requests answer speech on Listen and shows server and playback failures besi
     await act(async () => receive({ type: 'speech', what: 'answer', ticketNo: 7, url: '/voice/answer.mp3' }));
     expect(screen.getByText("Couldn't play the answer.")).toBeTruthy();
   } finally { vi.restoreAllMocks(); vi.unstubAllGlobals(); }
+});
+
+
+describe('audio alerts after a resume', () => {
+  beforeEach(() => {
+    localStorage.setItem('mola:demo', JSON.stringify({ ticketNo: 7, secret }));
+    alerts.unlockSound.mockImplementation(async () => { alerts.isSoundUnlocked.mockReturnValue(true); });
+    vi.stubGlobal('AudioContext', class {
+      createMediaStreamDestination() { return { stream: null }; }
+      resume() { return Promise.resolve(); }
+      close() { return Promise.resolve(); }
+    });
+    vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue();
+    vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => undefined);
+  });
+  afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+
+  it.each(['waiting', 'called'] as const)('offers alerts for a restored %s ticket and unlocks both players', async (status) => {
+    render(<PatronApp />); open();
+    expect(screen.queryByRole('button', { name: 'Turn on alerts' })).toBeNull();
+    receive({ type: 'status', ticket: ticket({ status }), board });
+    expect(screen.getByText("Tap once so we can play a sound when it's your turn.")).toBeTruthy();
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Turn on alerts' })); });
+    expect(alerts.unlockSound).toHaveBeenCalled();
+    expect(HTMLMediaElement.prototype.play).toHaveBeenCalled();
+    expect(HTMLMediaElement.prototype.pause).toHaveBeenCalled();
+    expect(screen.queryByRole('button', { name: 'Turn on alerts' })).toBeNull();
+  });
+
+  it.each(['Ask the office', 'Voice', 'English'])('unlocks after tapping %s', async (name) => {
+    render(<PatronApp />); open();
+    receive({ type: 'status', ticket: ticket(), board });
+    expect(screen.getByRole('button', { name: 'Turn on alerts' })).toBeTruthy();
+    await act(async () => {
+      const button = screen.getByRole('button', { name });
+      fireEvent.pointerDown(button, { button: 0, ctrlKey: false });
+      fireEvent.click(button);
+    });
+    expect(alerts.unlockSound).toHaveBeenCalled();
+    expect(screen.queryByRole('button', { name: 'Turn on alerts' })).toBeNull();
+  });
+
+  it('unlocks alerts when the patron turns remembered voice off', async () => {
+    localStorage.setItem('mola:voice', 'true');
+    render(<PatronApp />); open();
+    receive({ type: 'status', ticket: ticket(), board });
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Voice' })); });
+    expect(localStorage.getItem('mola:voice')).toBe('false');
+    expect(screen.queryByRole('button', { name: 'Turn on alerts' })).toBeNull();
+  });
+
+  it('keeps alerts unlocked after joining with a tap', async () => {
+    localStorage.removeItem('mola:demo');
+    render(<PatronApp />); open();
+    expect(screen.queryByRole('button', { name: 'Turn on alerts' })).toBeNull();
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Get a number' })); });
+    receive({ type: 'ticket', officeId: 'demo', ticketNo: 7, secret });
+    receive({ type: 'status', ticket: ticket(), board });
+    expect(HTMLMediaElement.prototype.play).toHaveBeenCalled();
+    expect(screen.queryByRole('button', { name: 'Turn on alerts' })).toBeNull();
+  });
+
+  it.each(['done', 'left', 'no_show', 'serving'] as const)('does not offer alerts for %s tickets', (status) => {
+    render(<PatronApp />); open();
+    receive({ type: 'status', ticket: ticket({ status }), board });
+    expect(screen.queryByRole('button', { name: 'Turn on alerts' })).toBeNull();
+  });
+
+  it('does not offer alerts for an invalid office', () => {
+    window.history.replaceState(null, '', '/');
+    render(<PatronApp />);
+    expect(screen.queryByRole('button', { name: 'Turn on alerts' })).toBeNull();
+  });
 });
