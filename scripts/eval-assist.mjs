@@ -105,7 +105,7 @@ try {
     if (i % 8 === 0) {
       patron = client('patron');
       await patron.opened;
-      const ticket = checked(await patron.request({ action: 'join' }, (m) => m.type === 'ticket', 'evaluation ticket'));
+      const ticket = checked(await patron.request({ action: 'join', staffKey: args['staff-key'] }, (m) => m.type === 'ticket', 'evaluation ticket'));
       patron.ticket = { ticketNo: ticket.ticketNo, secret: ticket.secret };
       patrons.push(patron);
     }

@@ -30,3 +30,5 @@ export const MAX_ASKS_PER_TICKET = 10;
 export function officeTimeZone(): string {
   return process.env.OFFICE_TIME_ZONE ?? 'Africa/Johannesburg';
 }
+
+export const JOIN_CODE_TTL_MS = 120_000;

@@ -10,15 +10,17 @@ import { UnlockDialog } from './UnlockDialog';
 
 const DESK = /^[A-Za-z0-9 -]{1,20}$/;
 
-function read(store: Storage, key: string): string | null {
+function read(storage: 'local' | 'session', key: string): string | null {
   try {
+    const store = storage === 'local' ? localStorage : sessionStorage;
     return store.getItem(key);
   } catch {
     return null;
   }
 }
-function write(store: Storage, key: string, value: string | null): void {
+function write(storage: 'local' | 'session', key: string, value: string | null): void {
   try {
+    const store = storage === 'local' ? localStorage : sessionStorage;
     if (value === null) store.removeItem(key);
     else store.setItem(key, value);
   } catch {
@@ -28,7 +30,11 @@ function write(store: Storage, key: string, value: string | null): void {
 
 function ScreenBoard({ officeId, staff }: { officeId: string; staff: boolean }) {
   const [view, setView] = useState<{ board: Board; receivedAt: number } | null>(null);
-  const [desk, setDesk] = useState(() => read(localStorage, `mola:desk:${officeId}`) ?? 'Desk 1');
+  const [join, setJoin] = useState<{ code: string; expiresAt: number } | null>(null);
+  const refreshedCode = useRef<string | null>(null);
+  const keyName = staff ? `mola:staff:${officeId}` : `mola:screen-key:${officeId}`;
+  const keyRef = useRef<string | null>(read(staff ? 'session' : 'local', keyName));
+  const [desk, setDesk] = useState(() => read('local', `mola:desk:${officeId}`) ?? 'Desk 1');
   const [pending, setPending] = useState(false);
   // The call in flight: the desk it was sent for, and the ticket that desk was already calling
   // (if any). Only a different ticket at that desk on the board answers it.
@@ -44,7 +50,6 @@ function ScreenBoard({ officeId, staff }: { officeId: string; staff: boolean }) 
   const [summaryOpen, setSummaryOpen] = useState(false);
   const [summary, setSummary] = useState<Extract<ServerMessage, { type: 'summary' }> | null>(null);
   const unlockAction = useRef<((key: string) => void) | null>(null);
-  const keyName = `mola:staff:${officeId}`;
 
   const interrupt = () => {
     notesDialog.current?.interrupt();
@@ -58,7 +63,8 @@ function ScreenBoard({ officeId, staff }: { officeId: string; staff: boolean }) 
       interrupt();
       pendingRef.current = null;
       setPending(false);
-      sendNow({ action: 'watch' });
+      const staffKey = keyRef.current;
+      sendNow(staffKey ? { action: 'watch', staffKey } : { action: 'watch' });
     },
     onMessage: (msg) => {
       if (msg.type === 'status' || msg.type === 'board') {
@@ -74,6 +80,7 @@ function ScreenBoard({ officeId, staff }: { officeId: string; staff: boolean }) 
           break;
         case 'status':
         case 'board': {
+          if (msg.type === 'board') setJoin(msg.join ?? null);
           boardRef.current = msg.board;
           setView({ board: msg.board, receivedAt: Date.now() });
           const sent = pendingRef.current;
@@ -99,7 +106,9 @@ function ScreenBoard({ officeId, staff }: { officeId: string; staff: boolean }) 
           setPending(false);
           if (msg.code === 'forbidden') {
             setSummaryOpen(false);
-            write(sessionStorage, keyName, null);
+            keyRef.current = null;
+            setJoin(null);
+            write(staff ? 'session' : 'local', keyName, null);
             setUnlock({ open: true, error: true });
           } else if (msg.code === 'desk_busy') {
             const mine = boardRef.current?.calling.find((c) => c.desk === deskRef.current);
@@ -118,6 +127,17 @@ function ScreenBoard({ officeId, staff }: { officeId: string; staff: boolean }) 
     if (state !== 'open') interrupt();
   }, [state]);
 
+  const sendRef = useRef(send);
+  useEffect(() => { sendRef.current = send; });
+  useEffect(() => {
+    if (!join || state !== 'open' || refreshedCode.current === join.code) return;
+    const timer = setTimeout(() => {
+      refreshedCode.current = join.code;
+      sendRef.current({ action: 'refreshJoinCode' });
+    }, Math.max(0, join.expiresAt - (view?.board.serverTime ?? Date.now()) - (Date.now() - (view?.receivedAt ?? Date.now()))));
+    return () => clearTimeout(timer);
+  }, [join, state, view]);
+
   const callNext = (staffKey: string) => {
     if (!DESK.test(deskRef.current)) {
       setLog('Give this desk a name of up to 20 letters, numbers or spaces.');
@@ -131,27 +151,25 @@ function ScreenBoard({ officeId, staff }: { officeId: string; staff: boolean }) 
 
   const withKey = (action: (key: string) => void) => {
     unlockAction.current = action;
-    const key = read(sessionStorage, keyName);
+    const key = keyRef.current;
     if (key) action(key);
     else setUnlock({ open: true, error: false });
   };
 
-  if (!view) {
-    return (
-      <p className="grid h-dvh place-items-center text-[3vh] text-muted">Connecting to {officeName(officeId)}</p>
-    );
-  }
-  const joinUrl = `${import.meta.env.VITE_APP_URL}/?office=${encodeURIComponent(officeId)}`;
+  const joinUrl = join ? `${import.meta.env.VITE_APP_URL}/?office=${encodeURIComponent(officeId)}&c=${encodeURIComponent(join.code)}` : null;
   return (
     <>
-      <BoardView board={view.board} receivedAt={view.receivedAt} joinUrl={joinUrl} reconnecting={state !== 'open'}>
+      {view ? <BoardView board={view.board} receivedAt={view.receivedAt} joinUrl={joinUrl} onUnlock={() => {
+        unlockAction.current = null;
+        setUnlock({ open: true, error: false });
+      }} reconnecting={state !== 'open'}>
         {staff && (
           <StaffStrip
             desk={desk}
             onDesk={(next) => {
               deskRef.current = next;
               setDesk(next);
-              write(localStorage, `mola:desk:${officeId}`, next);
+              write('local', `mola:desk:${officeId}`, next);
             }}
             pending={pending}
             log={log}
@@ -166,7 +184,7 @@ function ScreenBoard({ officeId, staff }: { officeId: string; staff: boolean }) 
             onCallNext={() => withKey(callNext)}
           />
         )}
-      </BoardView>
+      </BoardView> : <p className="grid h-dvh place-items-center text-[3vh] text-muted">Connecting to {officeName(officeId)}</p>}
       {staff && <>
         <NotesDialog
           ref={notesDialog}
@@ -187,20 +205,22 @@ function ScreenBoard({ officeId, staff }: { officeId: string; staff: boolean }) 
           summaryPending.current = false;
           setSummaryOpen(false);
         }} />}
-        <UnlockDialog
-          open={unlock.open}
-          error={unlock.error}
-          onCancel={() => {
-            notesDialog.current?.setSaving(false);
-            setUnlock({ open: false, error: false });
-          }}
-          onUnlock={(key) => {
-            write(sessionStorage, keyName, key);
-            setUnlock({ open: false, error: false });
-            unlockAction.current?.(key);
-          }}
-        />
       </>}
+      <UnlockDialog
+        open={unlock.open}
+        error={unlock.error}
+        onCancel={() => {
+          notesDialog.current?.setSaving(false);
+          setUnlock({ open: false, error: false });
+        }}
+        onUnlock={(key) => {
+          keyRef.current = key;
+          write(staff ? 'session' : 'local', keyName, key);
+          send({ action: 'watch', staffKey: key });
+          setUnlock({ open: false, error: false });
+          unlockAction.current?.(key);
+        }}
+      />
     </>
   );
 }

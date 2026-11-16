@@ -1,6 +1,9 @@
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Board, ServerMessage } from '../src/lib/messages';
+
+const qr = vi.hoisted(() => ({ toDataURL: vi.fn() }));
+vi.mock('qrcode', () => ({ default: qr }));
 
 const fake = vi.hoisted(() => ({
   opts: null as null | { onMessage(m: unknown): void; onState(s: string): void; onOpen(): void },
@@ -23,6 +26,7 @@ const receive = (m: ServerMessage) => act(() => fake.opts?.onMessage(m));
 const key = 'a-staff-key-for-tests';
 
 beforeEach(() => {
+  qr.toDataURL.mockReset().mockImplementation((text: string) => Promise.resolve(`data:image/png;base64,${btoa(text)}`));
   fake.opts = null;
   fake.sent = [];
   localStorage.clear();
@@ -312,4 +316,76 @@ it('resets board ordering when the office changes', () => {
   receive({ type: 'board', board: board({ officeId: 'clinic', snapshotAt: 10, calling: [{ ticketNo: 8, desk: 'Desk 2', deadline: null }] }) });
   expect(screen.getByRole('listitem', { name: 'Ticket 8, Desk 2' })).toBeTruthy();
   expect(screen.queryByRole('listitem', { name: 'Ticket 7, Desk 1' })).toBeNull();
+});
+
+it('locks the display QR and remembers its unlock key across reconnects', () => {
+  window.history.replaceState(null, '', '/screen?office=demo');
+  ready();
+  expect(screen.getByText('Unlock this screen to show the join code')).toBeTruthy();
+  expect(screen.queryByAltText('QR code to join the queue')).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'Unlock' }));
+  const staffKey = crypto.randomUUID();
+  fireEvent.change(screen.getByLabelText('Staff key'), { target: { value: staffKey } });
+  fireEvent.click(screen.getByRole('button', { name: 'Unlock' }));
+  expect(localStorage.getItem('mola:screen-key:demo')).toBe(staffKey);
+  expect(fake.sent).toContainEqual({ action: 'watch', staffKey });
+  open();
+  expect(fake.sent.slice(-1)).toEqual([{ action: 'watch', staffKey }]);
+});
+it('refreshes an expired code once even when the same board is repeated', () => {
+  vi.useFakeTimers();
+  try {
+    ready();
+    const join = { code: crypto.randomUUID().replaceAll('-', '').slice(0, 16), expiresAt: Date.now() + 1000 };
+    receive({ type: 'board', board: board(), join });
+    act(() => { vi.advanceTimersByTime(1000); });
+    receive({ type: 'board', board: board(), join });
+    act(() => { vi.advanceTimersByTime(5000); });
+    expect(fake.sent.filter(m => (m as { action: string }).action === 'refreshJoinCode')).toHaveLength(1);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it('asks again when a cached display key is rejected before the first board', () => {
+  window.history.replaceState(null, '', '/screen?office=demo');
+  localStorage.setItem('mola:screen-key:demo', crypto.randomUUID());
+  render(<ScreenApp />);
+  open();
+  receive({ type: 'error', code: 'forbidden', message: 'Forbidden' });
+  expect(screen.getByLabelText('Staff key')).toBeTruthy();
+  expect(localStorage.getItem('mola:screen-key:demo')).toBeNull();
+});
+it('continues to unlock and reconnect when local storage is inaccessible', () => {
+  window.history.replaceState(null, '', '/screen?office=demo');
+  const getter = vi.spyOn(window, 'localStorage', 'get').mockImplementation(() => { throw new Error('Storage unavailable'); });
+  try {
+    ready();
+    fireEvent.click(screen.getByRole('button', { name: 'Unlock' }));
+    const staffKey = crypto.randomUUID();
+    fireEvent.change(screen.getByLabelText('Staff key'), { target: { value: staffKey } });
+    fireEvent.click(screen.getByRole('button', { name: 'Unlock' }));
+    open();
+    expect(fake.sent.slice(-1)).toEqual([{ action: 'watch', staffKey }]);
+  } finally {
+    getter.mockRestore();
+  }
+});
+
+it('replaces the QR when a new join code arrives and hides the old QR while generating', async () => {
+  ready();
+  const first = { code: crypto.randomUUID().replaceAll('-', '').slice(0, 16), expiresAt: Date.now() + 120_000 };
+  receive({ type: 'board', board: board(), join: first });
+  await waitFor(() => expect(screen.getByAltText('QR code to join the queue')).toBeTruthy());
+  const src = screen.getByAltText('QR code to join the queue').getAttribute('src');
+  let resolve: (url: string) => void = () => { throw new Error('QR generation has not started'); };
+  qr.toDataURL.mockImplementationOnce(() => new Promise<string>(done => { resolve = done; }));
+  const second = { ...first, code: crypto.randomUUID().replaceAll('-', '').slice(0, 16) };
+  receive({ type: 'board', board: board(), join: second });
+  expect(qr.toDataURL).toHaveBeenLastCalledWith(expect.stringContaining(`&c=${second.code}`), expect.any(Object));
+  expect(screen.queryByAltText('QR code to join the queue')).toBeNull();
+  await act(async () => { resolve(`data:image/png;base64,${btoa(second.code)}`); });
+  expect(screen.getByAltText('QR code to join the queue').getAttribute('src')).not.toBe(src);
+  receive({ type: 'board', board: board() });
+  expect(screen.queryByAltText('QR code to join the queue')).toBeNull();
 });

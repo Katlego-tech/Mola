@@ -262,3 +262,38 @@ export async function refundAsk(officeId: string, ticketNo: number): Promise<voi
     ExpressionAttributeValues: { ':minus': -1, ':zero': 0 },
   }));
 }
+
+export async function consumeJoinCode(officeId: string, code: string, newCode: string, nowMs: number, ttlMs: number): Promise<number> {
+  const { Attributes } = await ddb.send(new UpdateCommand({
+    TableName: TABLE(), Key: { pk: officePk(officeId), sk: 'META' },
+    UpdateExpression: 'ADD ticketCounter :one SET joinCode = :new, joinCodeIssuedAt = :now',
+    ConditionExpression: 'joinCode = :code AND joinCodeIssuedAt > :cutoff',
+    ExpressionAttributeValues: { ':one': 1, ':new': newCode, ':now': nowMs, ':code': code, ':cutoff': nowMs - ttlMs },
+    ReturnValues: 'UPDATED_NEW',
+  }));
+  return Attributes?.ticketCounter as number;
+}
+
+export async function ensureJoinCode(officeId: string, newCode: string, nowMs: number, ttlMs: number): Promise<{ code: string; issuedAt: number }> {
+  let office: Record<string, unknown> | undefined;
+  try {
+    const { Attributes } = await ddb.send(new UpdateCommand({
+      TableName: TABLE(), Key: { pk: officePk(officeId), sk: 'META' },
+      UpdateExpression: 'SET joinCode = :new, joinCodeIssuedAt = :now, officeId = if_not_exists(officeId, :o), createdAt = if_not_exists(createdAt, :iso)',
+      ConditionExpression: 'attribute_not_exists(joinCode) OR joinCodeIssuedAt <= :cutoff',
+      ExpressionAttributeValues: { ':new': newCode, ':now': nowMs, ':o': officeId, ':iso': new Date(nowMs).toISOString(), ':cutoff': nowMs - ttlMs },
+      ReturnValues: 'ALL_NEW',
+    }));
+    office = Attributes;
+  } catch (error) {
+    if (!(error instanceof Error && error.name === 'ConditionalCheckFailedException')) throw error;
+    const { Item } = await ddb.send(new GetCommand({
+      TableName: TABLE(), Key: { pk: officePk(officeId), sk: 'META' }, ConsistentRead: true,
+    }));
+    office = Item;
+  }
+  if (typeof office?.joinCode !== 'string' || typeof office.joinCodeIssuedAt !== 'number') {
+    throw new Error('Office join code is missing');
+  }
+  return { code: office.joinCode, issuedAt: office.joinCodeIssuedAt };
+}

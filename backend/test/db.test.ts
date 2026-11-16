@@ -12,7 +12,7 @@ const office: Office = { officeId: 'demo', ticketCounter: 42, createdAt: iso };
 const ticket: Ticket = { officeId: 'demo', ticketNo: 42, status: 'waiting', queueKey: 42,
   secretHash: 'a'.repeat(64), misses: 0, createdAt: iso, expiresAt: 2000000000 };
 const connection: Connection = { connectionId: 'c', officeId: 'demo', role: 'patron', expiresAt: 2000000000 };
-const screen: Screen = { officeId: 'demo', connectionId: 's', expiresAt: 2000000000 };
+const screen: Screen = { officeId: 'demo', connectionId: 's', trusted: false, expiresAt: 2000000000 };
 const ticketKey = { pk: 'OFFICE#demo', sk: 'TICKET#000042' };
 
 beforeEach(() => { mock.reset(); vi.stubEnv('TABLE_NAME', 'test-table'); });
@@ -209,4 +209,33 @@ it('timestamps the snapshot before the consistent query starts', async () => {
     return { Items: [] };
   });
   expect(await db.loadOffice('demo')).toEqual({ office: null, tickets: [], screens: [], readAt });
+});
+
+describe('join codes', () => {
+  it('increments and rotates with a single conditional update', async () => {
+    mock.on(UpdateCommand).resolves({ Attributes: { ticketCounter: 43 } });
+    expect(await db.consumeJoinCode('clinic', 'old', 'new', 200_000, 120_000)).toBe(43);
+    expect(mock.commandCalls(UpdateCommand)[0]?.args[0].input).toMatchObject({
+      ReturnValues: 'UPDATED_NEW',
+      ConditionExpression: 'joinCode = :code AND joinCodeIssuedAt > :cutoff',
+      ExpressionAttributeValues: { ':code': 'old', ':new': 'new', ':now': 200_000, ':cutoff': 80_000, ':one': 1 },
+    });
+  });
+  it('returns the winning code after another screen rotates first', async () => {
+    mock.on(UpdateCommand).rejects(new ConditionalCheckFailedException({ $metadata: {}, message: 'Live' }));
+    mock.on(GetCommand).resolves({ Item: { joinCode: 'winner', joinCodeIssuedAt: 200_000 } });
+    expect(await db.ensureJoinCode('clinic', 'loser', 200_000, 120_000)).toEqual({ code: 'winner', issuedAt: 200_000 });
+    expect(mock.commandCalls(GetCommand)[0]?.args[0].input.ConsistentRead).toBe(true);
+  });
+});
+
+it('creates or renews a code only when absent or expired', async () => {
+  mock.on(UpdateCommand).resolves({ Attributes: { joinCode: 'new', joinCodeIssuedAt: 200_000 } });
+  expect(await db.ensureJoinCode('clinic', 'new', 200_000, 120_000)).toEqual({ code: 'new', issuedAt: 200_000 });
+  expect(mock.commandCalls(UpdateCommand)[0]?.args[0].input).toMatchObject({
+    ReturnValues: 'ALL_NEW',
+    ConditionExpression: 'attribute_not_exists(joinCode) OR joinCodeIssuedAt <= :cutoff',
+    ExpressionAttributeValues: { ':new': 'new', ':now': 200_000, ':o': 'clinic', ':iso': new Date(200_000).toISOString(), ':cutoff': 80_000 },
+  });
+  expect(mock.commandCalls(GetCommand)).toHaveLength(0);
 });

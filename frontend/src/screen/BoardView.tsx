@@ -5,10 +5,11 @@ import { CallingList } from './CallingList';
 import { ServingRow } from './ServingRow';
 import { SidePanel } from './SidePanel';
 
-export function BoardView({ board, receivedAt, joinUrl, reconnecting, children }: {
+export function BoardView({ board, receivedAt, joinUrl, onUnlock, reconnecting, children }: {
   board: Board;
   receivedAt: number;
-  joinUrl: string;
+  joinUrl: string | null;
+  onUnlock?(): void;
   reconnecting: boolean;
   children?: ReactNode;
 }) {
@@ -33,7 +34,7 @@ export function BoardView({ board, receivedAt, joinUrl, reconnecting, children }
         <ServingRow serving={board.serving} />
         {children}
       </main>
-      <SidePanel board={board} joinUrl={joinUrl} />
+      <SidePanel board={board} joinUrl={joinUrl} onUnlock={onUnlock} />
     </div>
   );
 }

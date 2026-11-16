@@ -23,7 +23,7 @@ function ticket(ticketNo: number, overrides: Partial<Ticket> = {}): Ticket {
 }
 function snapshot(tickets: Ticket[] = [], screenIds: string[] = []): OfficeSnapshot {
   return { readAt: 1000, office: null, tickets, screens: screenIds.map(connectionId => ({
-    officeId: 'demo', connectionId, expiresAt: nowMs / 1000 + 3600,
+    officeId: 'demo', connectionId, trusted: false, expiresAt: nowMs / 1000 + 3600,
   })) };
 }
 
@@ -243,4 +243,24 @@ describe('requestBroadcast', () => {
     await expect(requestBroadcast('demo')).resolves.toBeUndefined();
     expect(console.error).toHaveBeenCalled();
   });
+});
+
+it('includes join information only on trusted screen board messages', async () => {
+  const code = randomUUID().replaceAll('-', '').slice(0, 16);
+  const state = snapshot([ticket(1)], ['trusted', 'public']);
+  state.office = { officeId: 'demo', ticketCounter: 1, createdAt: new Date(nowMs).toISOString(), joinCode: code, joinCodeIssuedAt: nowMs };
+  const trusted = state.screens[0];
+  if (!trusted) throw new Error('Screen missing');
+  trusted.trusted = true;
+  vi.mocked(loadOffice).mockResolvedValue(state);
+  await broadcast('demo', rules);
+  expect(send).toHaveBeenCalledWith('trusted', expect.objectContaining({ join: { code, expiresAt: nowMs + 120_000 } }));
+  for (const [id, message] of vi.mocked(send).mock.calls) {
+    if (id !== 'trusted') expect(JSON.stringify(message)).not.toContain(code);
+    const payload = message as ServerMessage;
+    if (payload.type === 'status') {
+      expect(payload).not.toHaveProperty('join');
+      expect(payload.board).not.toHaveProperty('join');
+    }
+  }
 });

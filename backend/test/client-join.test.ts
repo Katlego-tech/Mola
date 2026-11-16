@@ -3,9 +3,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Connection, OfficeSnapshot, Ticket, TicketStatus } from '../src/lib/model';
 import type { ServerMessage } from '../src/lib/messages';
 
+const staffKey = randomUUID();
+const code = randomUUID().replaceAll('-', '').slice(0, 16);
 const db = vi.hoisted(() => ({
   getConnection: vi.fn<(id: string) => Promise<Connection | null>>(),
   loadOffice: vi.fn<(officeId: string) => Promise<OfficeSnapshot>>(),
+  consumeJoinCode: vi.fn(),
   nextTicketNo: vi.fn<(officeId: string, nowIso: string) => Promise<number>>(),
   putTicket: vi.fn<(ticket: Ticket) => Promise<void>>(),
   setConnectionTicket: vi.fn<(id: string, ticketNo: number) => Promise<void>>(),
@@ -23,7 +26,7 @@ const now = Date.parse('2027-03-01T08:00:00.123Z');
 const officeRules = { confirmWindowSeconds: 120, dropBackPlaces: 3, maxMisses: 2 };
 const event = (action: 'join' | 'resume', connectionId = 'c-9', secret?: string) => ({
   requestContext: { routeKey: action, connectionId },
-  body: JSON.stringify(action === 'join' ? { action } : { action, ticketNo: 42, secret }),
+  body: JSON.stringify(action === 'join' ? { action, staffKey } : { action, ticketNo: 42, secret }),
 });
 const connection = (overrides: Partial<Connection> = {}): Connection => ({
   connectionId: 'c-9', officeId: 'demo', role: 'patron', expiresAt: Math.floor(now / 1000) + 7200,
@@ -55,6 +58,8 @@ beforeEach(() => {
   db.getConnection.mockResolvedValue(connection());
   db.loadOffice.mockResolvedValue(snapshot());
   db.nextTicketNo.mockResolvedValue(42);
+  vi.stubEnv('STAFF_KEY_SHA256', createHash('sha256').update(staffKey).digest('hex'));
+  db.consumeJoinCode.mockResolvedValue(42);
   ws.send.mockResolvedValue('sent');
 });
 
@@ -226,4 +231,37 @@ describe('resume', () => {
     expect(ws.send).toHaveBeenCalledExactlyOnceWith('c-9', expect.objectContaining({ type: 'error', code: 'bad_ticket' }));
     expectNoWrites();
   });
+});
+
+describe('single-use codes', () => {
+  const coded = () => ({ requestContext: { routeKey: 'join', connectionId: 'c-9' }, body: JSON.stringify({ action: 'join', code }) });
+  it('consumes and rotates the code before issuing a ticket', async () => {
+    await handler(coded());
+    expect(db.consumeJoinCode).toHaveBeenCalledWith('demo', code, expect.stringMatching(/^[A-Za-z0-9_-]{16}$/), now, 120_000);
+    expect(db.consumeJoinCode).toHaveBeenCalledBefore(db.putTicket);
+    expect(db.nextTicketNo).not.toHaveBeenCalled();
+    expect(db.putTicket).toHaveBeenCalledOnce();
+  });
+  it.each(['spent', 'expired'])('refuses a %s code without issuing a ticket', async () => {
+    db.consumeJoinCode.mockRejectedValue(Object.assign(new Error('Unavailable'), { name: 'ConditionalCheckFailedException' }));
+    await handler(coded());
+    expect(ws.send).toHaveBeenCalledWith('c-9', expect.objectContaining({ type: 'error', code: 'stale_code' }));
+    expect(db.putTicket).not.toHaveBeenCalled();
+  });
+  it('refuses an invalid staff key', async () => {
+    vi.stubEnv('STAFF_KEY_SHA256', createHash('sha256').update(randomUUID()).digest('hex'));
+    await handler(event('join'));
+    expect(ws.send).toHaveBeenCalledWith('c-9', expect.objectContaining({ code: 'forbidden' }));
+    expectNoWrites();
+  });
+});
+
+it('issues once and rejects reuse of the consumed code', async () => {
+  db.consumeJoinCode.mockResolvedValueOnce(42).mockRejectedValueOnce(Object.assign(new Error('Consumed'), { name: 'ConditionalCheckFailedException' }));
+  const body = JSON.stringify({ action: 'join', code });
+  await handler({ requestContext: { routeKey: 'join', connectionId: 'first-phone' }, body });
+  await handler({ requestContext: { routeKey: 'join', connectionId: 'second-phone' }, body });
+  expect(db.putTicket).toHaveBeenCalledOnce();
+  expect(ws.send).toHaveBeenCalledWith('first-phone', expect.objectContaining({ type: 'ticket' }));
+  expect(ws.send).toHaveBeenCalledWith('second-phone', expect.objectContaining({ type: 'error', code: 'stale_code' }));
 });

@@ -1,4 +1,6 @@
 {
+  "scanToJoin": "Scan the code on the screen to take a number.",
+  "staleCode": "That code has expired or was already used. Scan the code on the screen again.",
   "brand": "MOLA",
   "aheadNone": "You're next",
   "aheadOne": "{n} person ahead",

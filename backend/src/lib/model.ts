@@ -1,7 +1,7 @@
 export type TicketStatus = 'waiting' | 'called' | 'serving' | 'done' | 'left' | 'no_show';
 export const ACTIVE: ReadonlySet<TicketStatus> = new Set(['waiting', 'called', 'serving']);
 
-export interface Office { officeId: string; ticketCounter: number; createdAt: string; notesVersion?: number; }
+export interface Office { officeId: string; ticketCounter: number; createdAt: string; notesVersion?: number; joinCode?: string; joinCodeIssuedAt?: number; }
 
 export interface Ticket {
   officeId: string; ticketNo: number; status: TicketStatus; queueKey: number;
@@ -15,6 +15,6 @@ export interface Connection {
   ticketNo?: number; expiresAt: number;
 }
 
-export interface Screen { officeId: string; connectionId: string; expiresAt: number; }
+export interface Screen { officeId: string; connectionId: string; expiresAt: number; trusted: boolean; }
 
 export interface OfficeSnapshot { readAt: number; office: Office | null; tickets: Ticket[]; screens: Screen[]; }

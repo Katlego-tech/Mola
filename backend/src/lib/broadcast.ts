@@ -4,7 +4,7 @@ import { rules as currentRules } from './config';
 import { deleteScreen, loadOffice, removeTicketConnection } from './db';
 import type { Board, ServerMessage } from './messages';
 import { positions, waitingLine } from './ordering';
-import { boardOf, ticketView } from './views';
+import { boardOf, screenBoard, ticketView } from './views';
 import { send } from './ws';
 
 export interface BroadcastRequest {
@@ -70,7 +70,7 @@ export async function broadcast(
   for (const screen of snapshot.screens) {
     deliveries.push({
       connectionId: screen.connectionId,
-      payload: { type: 'board', board },
+      payload: screenBoard(officeId, snapshot, nowMs, rules, screen.trusted),
       remove: () => deleteScreen(officeId, screen.connectionId),
     });
   }

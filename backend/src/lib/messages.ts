@@ -9,11 +9,13 @@ export type ClientMessage =
   | { action: 'notes'; lang: Lang }
   | { action: 'saveNotes'; text: string; baseVersion: number; staffKey: string }
   | { action: 'daySummary'; staffKey: string }
-  | { action: 'join' }
+  | { action: 'join'; code: string; staffKey?: never }
+  | { action: 'join'; staffKey: string; code?: never }
   | { action: 'resume'; ticketNo: number; secret: string }
   | { action: 'confirm'; ticketNo: number; secret: string }
   | { action: 'leave'; ticketNo: number; secret: string }
-  | { action: 'watch' }
+  | { action: 'watch'; staffKey?: string }
+  | { action: 'refreshJoinCode' }
   | { action: 'ping' }
   | { action: 'callNext'; desk: string; staffKey: string };
 
@@ -23,7 +25,7 @@ export type ServerMessage =
   | { type: 'summary'; stats: DayStats; text: string | null }
   | { type: 'ticket'; officeId: string; ticketNo: number; secret: string }
   | { type: 'status'; ticket: TicketView; board: Board }
-  | { type: 'board'; board: Board }
+  | { type: 'board'; board: Board; join?: { code: string; expiresAt: number } }
   | { type: 'notice'; code: NoticeCode; ticketNo?: number; placesBack?: number }
   | { type: 'error'; code: ErrorCode; message: string };
 
@@ -44,7 +46,7 @@ export type NoticeCode =
   | 'too_late'
   | 'queue_empty';
 export type ErrorCode =
-  | 'no_session' | 'bad_request' | 'unknown_action' | 'bad_ticket'
+  | 'stale_code' | 'no_session' | 'bad_request' | 'unknown_action' | 'bad_ticket'
   | 'already_has_ticket' | 'not_called' | 'forbidden' | 'desk_busy' | 'internal'
   | 'assist_unavailable' | 'ask_limit' | 'notes_conflict';
 
@@ -110,7 +112,26 @@ export function parseClientMessage(
       return { error: 'bad_request' };
 
     case 'join':
+      if (Object.keys(message).length === 2) {
+        if ('code' in message && typeof message.code === 'string' && /^[A-Za-z0-9_-]{16}$/.test(message.code)) {
+          return { action: 'join', code: message.code };
+        }
+        if ('staffKey' in message && typeof message.staffKey === 'string'
+          && message.staffKey.length >= 1 && message.staffKey.length <= 128) {
+          return { action: 'join', staffKey: message.staffKey };
+        }
+      }
+      return { error: 'bad_request' };
+
     case 'watch':
+      if (Object.keys(message).length === 2 && 'staffKey' in message && typeof message.staffKey === 'string'
+        && message.staffKey.length >= 1 && message.staffKey.length <= 128) {
+        return { action: 'watch', staffKey: message.staffKey };
+      }
+      if (Object.keys(message).length === 1) return { action: 'watch' };
+      return { error: 'bad_request' };
+
+    case 'refreshJoinCode':
     case 'ping':
       if (Object.keys(message).length === 1) {
         return { action: message.action };

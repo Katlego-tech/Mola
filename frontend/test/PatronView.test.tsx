@@ -28,6 +28,7 @@ function view(overrides: Partial<PatronViewProps> = {}) {
     online: true,
     resuming: false,
     joining: false,
+    canJoin: true,
     tooLate: false,
     lastUpdateAt: Date.now(),
     onJoin: vi.fn(),

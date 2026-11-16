@@ -1,6 +1,8 @@
+import { randomBytes } from 'node:crypto';
+import { verifyStaffKey } from '../lib/staff-key';
 import { requestBroadcast } from '../lib/broadcast';
-import { rules, ticketLifetimeSeconds } from '../lib/config';
-import { bindTicketConnection, finishServing, getConnection, loadOffice, markLeft, markServing, nextTicketNo, putScreen, putTicket, setConnectionTicket } from '../lib/db';
+import { JOIN_CODE_TTL_MS, rules, ticketLifetimeSeconds } from '../lib/config';
+import { consumeJoinCode, ensureJoinCode, bindTicketConnection, finishServing, getConnection, loadOffice, markLeft, markServing, nextTicketNo, putScreen, putTicket, setConnectionTicket } from '../lib/db';
 import { parseClientMessage } from '../lib/messages';
 import { ACTIVE } from '../lib/model';
 import { positions, waitingLine } from '../lib/ordering';
@@ -37,6 +39,10 @@ export async function handler(event: ClientEvent) {
         await replyError(connectionId, 'forbidden');
         return OK;
       }
+      if (msg.staffKey !== undefined && !verifyStaffKey(msg.staffKey)) {
+        await replyError(connectionId, 'forbidden');
+        return OK;
+      }
       if (conn.ticketNo !== undefined) {
         const snapshot = await loadOffice(conn.officeId);
         if (snapshot.tickets.some(ticket => ticket.ticketNo === conn.ticketNo && ACTIVE.has(ticket.status))) {
@@ -46,7 +52,16 @@ export async function handler(event: ClientEvent) {
       }
       const now = Date.now();
       const nowIso = new Date(now).toISOString();
-      const ticketNo = await nextTicketNo(conn.officeId, nowIso);
+      let ticketNo: number;
+      try {
+        ticketNo = msg.code !== undefined
+          ? await consumeJoinCode(conn.officeId, msg.code, randomBytes(12).toString('base64url'), now, JOIN_CODE_TTL_MS)
+          : await nextTicketNo(conn.officeId, nowIso);
+      } catch (error) {
+        if (!(error instanceof Error && error.name === 'ConditionalCheckFailedException')) throw error;
+        await replyError(connectionId, 'stale_code');
+        return OK;
+      }
       const { secret, secretHash } = issueSecret();
       await putTicket({
         officeId: conn.officeId, ticketNo, status: 'waiting', queueKey: ticketNo,
@@ -148,9 +163,33 @@ export async function handler(event: ClientEvent) {
         await replyError(connectionId, 'forbidden');
         return OK;
       }
-      await putScreen({ officeId: conn.officeId, connectionId, expiresAt: conn.expiresAt });
+      const trusted = msg.staffKey !== undefined && verifyStaffKey(msg.staffKey);
+      await putScreen({ officeId: conn.officeId, connectionId, expiresAt: conn.expiresAt, trusted });
+      if (msg.staffKey !== undefined && !trusted) {
+        await replyError(connectionId, 'forbidden');
+        return OK;
+      }
+      const join = trusted
+        ? await ensureJoinCode(conn.officeId, randomBytes(12).toString('base64url'), Date.now(), JOIN_CODE_TTL_MS) : null;
       const snapshot = await loadOffice(conn.officeId);
-      await send(connectionId, { type: 'board', board: boardOf(conn.officeId, snapshot, Date.now(), rules()) });
+      await send(connectionId, {
+        type: 'board', board: boardOf(conn.officeId, snapshot, Date.now(), rules()),
+        ...(join ? { join: { code: join.code, expiresAt: join.issuedAt + JOIN_CODE_TTL_MS } } : {}),
+      });
+      return OK;
+    }
+    case 'refreshJoinCode': {
+      if (conn.role !== 'screen') {
+        await replyError(connectionId, 'forbidden');
+        return OK;
+      }
+      const snapshot = await loadOffice(conn.officeId);
+      if (!snapshot.screens.some(screen => screen.connectionId === connectionId && screen.trusted && screen.expiresAt > Date.now() / 1000)) {
+        await replyError(connectionId, 'forbidden');
+        return OK;
+      }
+      await ensureJoinCode(conn.officeId, randomBytes(12).toString('base64url'), Date.now(), JOIN_CODE_TTL_MS);
+      await requestBroadcast(conn.officeId);
       return OK;
     }
     case 'ping':
