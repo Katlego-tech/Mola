@@ -109,6 +109,15 @@ describe('staff controls', () => {
     expect(JSON.stringify({ ...localStorage })).not.toContain(key);
   });
 
+  it('frees Call next when API Gateway answers with its own error', () => {
+    sessionStorage.setItem('mola:staff:demo', key);
+    ready();
+    fireEvent.click(screen.getByRole('button', { name: 'Call next' }));
+    act(() => fake.opts?.onMessage({ message: 'Internal server error', connectionId: 'x', requestId: 'y' }));
+    expect((screen.getByRole('button', { name: 'Call next' }) as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.getByText('Something went wrong on our side. Try again.')).toBeTruthy();
+  });
+
   it('says when nobody is waiting', () => {
     sessionStorage.setItem('mola:staff:demo', key);
     ready();

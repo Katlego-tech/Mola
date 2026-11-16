@@ -25,6 +25,8 @@ export interface PatronViewProps {
   /** The server said the confirm came after the window closed. */
   tooLate: boolean;
   lastUpdateAt: number;
+  /** The last request failed on the server side; shown next to the button that can retry it. */
+  failure?: string | null;
   onJoin(): void;
   onConfirm(): void;
   onLeave(): void;
@@ -52,12 +54,15 @@ function Page({ officeId, tone = 'ground', children, footer }: {
   );
 }
 
-function JoinButton({ onJoin, disabled, label }: { onJoin(): void; disabled: boolean; label: string }) {
+function JoinButton({ onJoin, disabled, label, failure }: { onJoin(): void; disabled: boolean; label: string; failure?: string | null }) {
   return (
-    <Button onClick={onJoin} disabled={disabled}>
-      <Ticket weight="bold" aria-hidden />
-      {label}
-    </Button>
+    <>
+      {failure && <p role="alert" className="px-1 font-semibold text-text">{failure}</p>}
+      <Button onClick={onJoin} disabled={disabled}>
+        <Ticket weight="bold" aria-hidden />
+        {label}
+      </Button>
+    </>
   );
 }
 
@@ -119,7 +124,7 @@ export function PatronView(props: PatronViewProps) {
       );
     }
     return (
-      <Page officeId={officeId} footer={<JoinButton onJoin={props.onJoin} disabled={props.joining || !props.online} label="Get a number" />}>
+      <Page officeId={officeId} footer={<JoinButton onJoin={props.onJoin} disabled={props.joining || !props.online} label="Get a number" failure={props.failure} />}>
         <div className="grid content-start gap-3.5 rounded-[14px] border-2 border-dashed border-line px-6 py-7">
           <h1 className="text-[2.5rem] leading-[1.05] font-bold">Take a number and leave the line.</h1>
           <p className="max-w-[32ch] text-muted">
@@ -155,7 +160,7 @@ export function PatronView(props: PatronViewProps) {
     };
     const [title, detail] = copy[ticket.status];
     return (
-      <Page officeId={officeId} footer={<JoinButton onJoin={props.onJoin} disabled={props.joining || !props.online} label="Get a new number" />}>
+      <Page officeId={officeId} footer={<JoinButton onJoin={props.onJoin} disabled={props.joining || !props.online} label="Get a new number" failure={props.failure} />}>
         <TicketStub ticketNo={ticket.ticketNo} closed>
           <StubLine title={title} detail={detail} />
         </TicketStub>

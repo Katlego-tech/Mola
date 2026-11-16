@@ -71,6 +71,15 @@ describe('PatronApp', () => {
     expect((screen.getByRole('button', { name: 'Get a number' }) as HTMLButtonElement).disabled).toBe(false);
   });
 
+  it('recovers when API Gateway answers a join with its own error (a throttled Lambda)', () => {
+    render(<PatronApp />);
+    open();
+    fireEvent.click(screen.getByRole('button', { name: 'Get a number' }));
+    act(() => fake.opts?.onMessage({ message: 'Internal server error', connectionId: 'x', requestId: 'y' }));
+    expect((screen.getByRole('button', { name: 'Get a number' }) as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.getByText('Something went wrong on our side. Try again.')).toBeTruthy();
+  });
+
   it('forgets the secret when the ticket closes', () => {
     localStorage.setItem('mola:demo', JSON.stringify({ ticketNo: 7, secret }));
     render(<PatronApp />);

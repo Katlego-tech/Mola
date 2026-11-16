@@ -6,6 +6,14 @@ export const OFFICE_ID = /^[a-z0-9-]{1,40}$/;
 
 type Send = (msg: ClientMessage) => void;
 
+/** When a Lambda fails or is throttled, API Gateway answers with its own frame
+ *  (`{message: "Internal server error", ...}`) instead of one of ours. It is the server saying the
+ *  request failed, so the screens treat it as our `internal` error rather than ignoring it. */
+function fromGateway(msg: ServerMessage): ServerMessage {
+  if (typeof msg === 'object' && msg !== null && 'type' in msg && typeof msg.type === 'string') return msg;
+  return { type: 'error', code: 'internal', message: 'Something went wrong on our side. Try again.' };
+}
+
 /** One WebSocket per mounted screen, reconnecting by itself (realtime.md 4.3, 4.5). The handlers
  *  are read through a ref, so callers can pass fresh closures without reconnecting. */
 export function useOfficeSocket(
@@ -26,7 +34,7 @@ export function useOfficeSocket(
   useEffect(() => {
     const url = `${import.meta.env.VITE_WS_URL}?office=${encodeURIComponent(officeId)}&role=${role}`;
     const socket = createSocket<ServerMessage, ClientMessage>(url, {
-      onMessage: (msg) => handlersRef.current.onMessage(msg),
+      onMessage: (msg) => handlersRef.current.onMessage(fromGateway(msg)),
       onState: setState,
       onOpen: () => handlersRef.current.onOpen(socket.send),
     });
