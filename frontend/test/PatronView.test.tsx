@@ -1,5 +1,7 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { LangProvider } from '../src/i18n';
+import en from '../src/i18n/en.json';
 import type { Board, TicketView } from '../src/lib/messages';
 import { PatronView, type PatronViewProps } from '../src/patron/PatronView';
 
@@ -33,7 +35,7 @@ function view(overrides: Partial<PatronViewProps> = {}) {
     onLeave: vi.fn(),
     ...overrides,
   };
-  render(<PatronView {...props} />);
+  render(<LangProvider catalogs={{ en }}><PatronView {...props} /></LangProvider>);
   return props;
 }
 

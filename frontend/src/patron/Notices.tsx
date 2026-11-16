@@ -1,5 +1,6 @@
 import { ArrowBendDownRight, ArrowsClockwise, Timer } from '@phosphor-icons/react';
 import type { ReactNode } from 'react';
+import { useT } from '@/i18n';
 import type { Board } from '@/lib/messages';
 
 function Notice({ icon, title, children }: { icon: ReactNode; title: string; children: ReactNode }) {
@@ -15,28 +16,31 @@ function Notice({ icon, title, children }: { icon: ReactNode; title: string; chi
 }
 
 export function MissedNotice({ misses, rules }: { misses: number; rules: Board['rules'] }) {
+  const { t } = useT();
   return (
-    <Notice icon={<ArrowBendDownRight weight="bold" />} title="You missed your turn">
-      You've moved back {rules.dropBackPlaces} places and you're still in the queue.
-      {misses >= rules.maxMisses && ' One more missed turn closes your ticket.'}
+    <Notice icon={<ArrowBendDownRight weight="bold" />} title={t('missedTitle')}>
+      {t('missedDescription', { places: rules.dropBackPlaces })}
+      {misses >= rules.maxMisses && t('missedWarning')}
     </Notice>
   );
 }
 
 export function TooLateNotice() {
+  const { t } = useT();
   return (
-    <Notice icon={<Timer weight="bold" />} title="Your time to confirm ran out">
-      Your place has been updated below.
+    <Notice icon={<Timer weight="bold" />} title={t('tooLateTitle')}>
+      {t('tooLateDescription')}
     </Notice>
   );
 }
 
 export function ReconnectStrip({ secondsAgo }: { secondsAgo: number }) {
+  const { t } = useT();
   return (
     <p role="status" className="flex items-center gap-2 rounded-[14px] border-[1.5px] border-dashed border-line bg-surface px-3.5 py-2.5 text-[0.875rem] font-semibold text-muted">
       <ArrowsClockwise weight="bold" aria-hidden />
-      Reconnecting. Your place is kept.
-      <span className="sr-only">Last updated {secondsAgo} seconds ago.</span>
+      {t('reconnecting')}
+      <span className="sr-only">{t('lastUpdated', { n: secondsAgo })}</span>
     </p>
   );
 }
