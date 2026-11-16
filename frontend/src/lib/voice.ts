@@ -5,6 +5,7 @@ type Playback = { url: string; failed(): void };
 export function createVoicePlayer() {
   let audio: HTMLAudioElement | null = null;
   let silence: AudioContext | null = null;
+  let unlocked = false;
   const releaseSilence = () => {
     if (audio) audio.srcObject = null;
     void silence?.close().catch(() => undefined);
@@ -46,19 +47,27 @@ export function createVoicePlayer() {
     }
   };
   return {
-    unlock(failed: () => void) {
-      if (current) return;
+    get unlocked() { return unlocked; },
+    async unlock(failed: () => void) {
+      if (current || unlocked) return;
       const version = ++generation;
       const player = element();
       try {
-        // A silent live stream unlocks this element without fetching audio or widening the CSP.
+        // Silent playback unlocks this element without fetching audio or widening the CSP.
         releaseSilence();
         silence = new AudioContext();
         player.srcObject = silence.createMediaStreamDestination().stream;
-        const rejected = () => { if (generation === version) failed(); };
-        void silence.resume().catch(rejected);
-        void player.play().catch(rejected);
-      } catch { failed(); }
+        await Promise.all([silence.resume(), player.play()]);
+        if (generation !== version) return;
+        player.pause();
+        releaseSilence();
+        unlocked = true;
+      } catch {
+        if (generation !== version) return;
+        player.pause();
+        releaseSilence();
+        failed();
+      }
     },
     play(url: string, failed: () => void) { queue.push({ url, failed }); next(); },
     stop,
@@ -116,11 +125,14 @@ export function useVoice(storageKey: string) {
   useEffect(() => () => player.stop(), [player]);
   return {
     enabled, hint,
+    get unlocked() { return player.unlocked; },
+    isUnlocked: useCallback(() => player.unlocked, [player]),
+    unlock: useCallback(() => player.unlock(() => undefined), [player]),
     toggle() {
       const next = !enabledRef.current;
       persist(next);
       setHint(false);
-      if (next) player.unlock(blocked);
+      if (next) void player.unlock(blocked);
       else {
         player.stop();
         discardCalls();
@@ -131,7 +143,7 @@ export function useVoice(storageKey: string) {
       else failed();
     },
     listen(ticketNo: number, secret: string, text: string, send: Request['send'], failed: () => void) {
-      player.unlock(failed);
+      void player.unlock(failed);
       request({ action: 'speak', what: 'answer', ticketNo, secret, text }, send, failed);
     },
     receive(message: ServerMessage) {

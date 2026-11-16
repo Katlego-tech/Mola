@@ -1,4 +1,4 @@
-import { Check, DeviceMobileSpeaker, Ticket } from '@phosphor-icons/react';
+import { BellRinging, Check, DeviceMobileSpeaker, Ticket } from '@phosphor-icons/react';
 import type { ReactNode } from 'react';
 import { useT } from '@/i18n';
 import { Button } from '@/components/ui/button';
@@ -32,6 +32,8 @@ export interface PatronViewProps {
   lastUpdateAt: number;
   /** The last request failed on the server side; shown next to the button that can retry it. */
   failure?: string | null;
+  audioUnlocked?: boolean;
+  onUnlockAlerts?(): void;
   onAsk?(): void;
   onJoin(): void;
   onConfirm(): void;
@@ -76,6 +78,20 @@ function JoinButton({ onJoin, disabled, label, failure }: { onJoin(): void; disa
   );
 }
 
+function AlertsRow({ audioUnlocked, onUnlockAlerts, onGo = false }: Pick<PatronViewProps, 'audioUnlocked' | 'onUnlockAlerts'> & { onGo?: boolean }) {
+  const { t } = useT();
+  if (audioUnlocked || !onUnlockAlerts) return null;
+  return (
+    <div className="grid gap-2">
+      <Button variant={onGo ? 'onGo' : 'primary'} size="md" onClick={onUnlockAlerts}>
+        <BellRinging weight="bold" aria-hidden />
+        {t('turnOnAlerts')}
+      </Button>
+      <p className={cn('px-1 text-[0.875rem]', onGo ? 'text-go-ink/80' : 'text-muted')}>{t('alertsHint')}</p>
+    </div>
+  );
+}
+
 function CalledView(props: PatronViewProps & { ticket: TicketView; board: Board }) {
   const { t } = useT();
   const now = useNow();
@@ -97,6 +113,7 @@ function CalledView(props: PatronViewProps & { ticket: TicketView; board: Board 
         </>
       }
     >
+      <AlertsRow {...props} onGo />
       <div role="alert">
         <h1 className="text-[2.5rem] leading-[1.05] font-bold">{t('yourTurn')}<br />{t('goTo')}</h1>
         <p className="m-ln num mt-1.5 text-[clamp(6.5rem,34vw,9rem)]">
@@ -193,6 +210,7 @@ export function PatronView(props: PatronViewProps) {
       {reconnect}
       {props.tooLate && <TooLateNotice />}
       {ticket.misses > 0 && <MissedNotice misses={ticket.misses} rules={board.rules} />}
+      <AlertsRow {...props} />
       <div className={cn(!props.online && 'opacity-55')}>
         <TicketStub ticketNo={ticket.ticketNo}>
           {ticket.position !== null && <AheadRow position={ticket.position} />}

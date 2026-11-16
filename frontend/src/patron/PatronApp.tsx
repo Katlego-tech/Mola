@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { VoiceContext, useVoice } from '@/lib/voice';
 import { LangProvider, useT } from '@/i18n';
-import { buzz, chime, holdWakeLock, unlockSound } from '@/lib/alerts';
+import { buzz, chime, holdWakeLock, isSoundUnlocked, unlockSound } from '@/lib/alerts';
 import type { Board, ClientMessage, TicketView } from '@/lib/messages';
 import { forgetTicket, loadTicket, saveTicket, type StoredTicket } from '@/lib/storedTicket';
 import { OFFICE_ID, useOfficeSocket } from '@/lib/useOfficeSocket';
@@ -29,6 +29,14 @@ function PatronSession({ officeId }: { officeId: string }) {
   }, []);
   const voice = useVoice('mola:voice');
   const interruptVoice = voice.interrupt;
+  const unlockVoice = voice.unlock;
+  const voiceUnlocked = voice.isUnlocked;
+  const [audioUnlocked, setAudioUnlocked] = useState(false);
+  const unlockAlerts = useCallback(() => {
+    void Promise.all([unlockSound(), unlockVoice()]).then(() => {
+      setAudioUnlocked(isSoundUnlocked() && voiceUnlocked());
+    });
+  }, [unlockVoice, voiceUnlocked]);
   const announced = useRef(new Set<string>());
   const announcing = useRef(new Set<string>());
   const askSheet = useRef<AskSheetHandle>(null);
@@ -216,9 +224,13 @@ function PatronSession({ officeId }: { officeId: string }) {
 
   // Sound may only start after a tap; any tap on the page unlocks it.
   useEffect(() => {
-    window.addEventListener('pointerdown', unlockSound, { once: true });
-    return () => window.removeEventListener('pointerdown', unlockSound);
-  }, []);
+    window.addEventListener('pointerdown', unlockAlerts, true);
+    window.addEventListener('click', unlockAlerts);
+    return () => {
+      window.removeEventListener('pointerdown', unlockAlerts, true);
+      window.removeEventListener('click', unlockAlerts);
+    };
+  }, [unlockAlerts]);
 
   // A half-open socket after the phone slept reads as "open" but delivers nothing.
   useEffect(() => {
@@ -236,6 +248,8 @@ function PatronSession({ officeId }: { officeId: string }) {
   return (
     <VoiceContext.Provider value={voice}>
       <PatronView
+        audioUnlocked={audioUnlocked}
+        onUnlockAlerts={unlockAlerts}
         onAsk={() => askSheet.current?.open()}
         officeId={officeId}
         ticket={view?.ticket ?? null}
@@ -252,7 +266,6 @@ function PatronSession({ officeId }: { officeId: string }) {
         failure={failure ? t('internalError') : null}
         onJoin={() => {
           if (!code || staleCode) return;
-          unlockSound();
           setFailure(null);
           setJoining(true);
           snapshotAt.current = -Infinity;
@@ -261,7 +274,6 @@ function PatronSession({ officeId }: { officeId: string }) {
           send({ action: 'join', code });
         }}
         onConfirm={() => {
-          unlockSound();
           const own = storedRef.current;
           if (!own || confirmRef.current || statusRef.current !== 'called' || state !== 'open') return;
           const message = { action: 'confirm' as const, ticketNo: own.ticketNo, secret: own.secret };
