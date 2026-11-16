@@ -14,9 +14,10 @@ export const screenSk = (connectionId: string) => `SCREEN#${connectionId}`;
 export const connKey = (connectionId: string) => ({ pk: `CONN#${connectionId}`, sk: 'META' });
 
 export async function loadOffice(officeId: string): Promise<OfficeSnapshot> {
-  const snapshot: OfficeSnapshot = { office: null, tickets: [], screens: [] };
-  const nowSec = Date.now() / 1000;
   let cursor: Record<string, unknown> | undefined;
+  const readAt = Date.now();
+  const snapshot: OfficeSnapshot = { office: null, tickets: [], screens: [], readAt };
+  const nowSec = readAt / 1000;
   do {
     const page = await ddb.send(new QueryCommand({
       TableName: TABLE(),

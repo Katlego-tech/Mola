@@ -19,7 +19,7 @@ vi.mock('../src/lib/alerts', () => alerts);
 const { PatronApp } = await import('../src/patron/PatronApp');
 
 const rules = { confirmWindowSeconds: 120, dropBackPlaces: 3, maxMisses: 2 };
-const board: Board = { officeId: 'demo', notesVersion: 0, calling: [], serving: [], waitingCount: 1, upNext: [7], serverTime: Date.now(), rules };
+const board: Board = { officeId: 'demo', notesVersion: 0, calling: [], serving: [], waitingCount: 1, upNext: [7], snapshotAt: 1000, serverTime: Date.now(), rules };
 const ticket = (over: Partial<TicketView> = {}): TicketView =>
   ({ ticketNo: 7, status: 'waiting', position: 1, desk: null, deadline: null, misses: 0, ...over });
 
@@ -282,4 +282,74 @@ it('releases an ask on reopen even without a rendered disconnected state', () =>
   expect(screen.getByText("The assistant isn't available right now. Ask at the desk.")).toBeTruthy();
   ask('Can I return later?');
   expect(sent().filter((m) => m.action === 'ask')).toHaveLength(2);
+});
+
+
+it('keeps the freshest called snapshot across status and board messages, applying ties', () => {
+  localStorage.setItem('mola:demo', JSON.stringify({ ticketNo: 7, secret }));
+  render(<PatronApp />);
+  open();
+  const called = ticket({ status: 'called', position: null, desk: 'Desk 1', deadline: board.serverTime + 60_000 });
+  receive({ type: 'status', ticket: called, board: { ...board, snapshotAt: 20 } });
+  receive({ type: 'status', ticket: { ...called, deadline: null }, board: { ...board, snapshotAt: 10 } });
+  receive({ type: 'board', board: { ...board, snapshotAt: 10, serverTime: board.serverTime + 120_000 } });
+  expect(screen.getByText('1:00')).toBeTruthy();
+  receive({ type: 'status', ticket: { ...called, status: 'serving' }, board: { ...board, snapshotAt: 20 } });
+  expect(screen.getByText('Confirmed. Desk 1 is expecting you.')).toBeTruthy();
+});
+
+it('lets Confirm retry while the called task is being prepared', () => {
+  localStorage.setItem('mola:demo', JSON.stringify({ ticketNo: 7, secret }));
+  render(<PatronApp />);
+  open();
+  receive({ type: 'status', ticket: ticket({ status: 'called', desk: 'Desk 1' }), board });
+  fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+  receive({ type: 'error', code: 'not_called', message: 'Not called' });
+  fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+  expect(sent().filter(m => m.action === 'confirm')).toEqual([
+    { action: 'confirm', ticketNo: 7, secret }, { action: 'confirm', ticketNo: 7, secret },
+  ]);
+  expect(screen.queryByText('Not called')).toBeNull();
+});
+
+it.each([null, board.serverTime + 60_000])('leaves from the called view with deadline %s', deadline => {
+  localStorage.setItem('mola:demo', JSON.stringify({ ticketNo: 7, secret }));
+  render(<PatronApp />);
+  open();
+  receive({ type: 'status', ticket: ticket({ status: 'called', desk: 'Desk 1', deadline }), board });
+  fireEvent.click(screen.getByRole('button', { name: "I can't come. Leave the queue" }));
+  const dialog = screen.getByRole('dialog');
+  // The animated call page creates a stacking context; the portal must paint above it.
+  expect(dialog.classList.contains('z-50')).toBe(true);
+  expect(dialog.previousElementSibling?.classList.contains('z-50')).toBe(true);
+  fireEvent.click(screen.getByRole('button', { name: 'Leave the queue' }));
+  expect(sent()).toContainEqual({ action: 'leave', ticketNo: 7, secret });
+  receive({ type: 'status', ticket: ticket({ status: 'left' }), board });
+  expect(screen.getByText("You've left the queue")).toBeTruthy();
+});
+
+it('resets snapshot ordering when joining another ticket', () => {
+  localStorage.setItem('mola:demo', JSON.stringify({ ticketNo: 7, secret }));
+  render(<PatronApp />);
+  open();
+  receive({ type: 'status', ticket: ticket({ status: 'left' }), board: { ...board, snapshotAt: 20 } });
+  fireEvent.click(screen.getByRole('button', { name: 'Get a new number' }));
+  receive({ type: 'ticket', officeId: 'demo', ticketNo: 8, secret });
+  receive({ type: 'status', ticket: ticket({ ticketNo: 8 }), board: { ...board, snapshotAt: 10 } });
+  expect(screen.getByText("You're next")).toBeTruthy();
+  expect(screen.getByText('8')).toBeTruthy();
+});
+
+it('resets the patron session when the office changes', () => {
+  localStorage.setItem('mola:demo', JSON.stringify({ ticketNo: 7, secret }));
+  const page = render(<PatronApp />);
+  open();
+  receive({ type: 'status', ticket: ticket({ status: 'called', desk: 'Desk 1' }), board: { ...board, snapshotAt: 20 } });
+  window.history.replaceState(null, '', '/?office=clinic');
+  page.rerender(<PatronApp />);
+  open();
+  receive({ type: 'ticket', officeId: 'clinic', ticketNo: 8, secret });
+  receive({ type: 'status', ticket: ticket({ ticketNo: 8 }), board: { ...board, officeId: 'clinic', snapshotAt: 10 } });
+  expect(screen.getByText("You're next")).toBeTruthy();
+  expect(screen.getByText('8')).toBeTruthy();
 });

@@ -22,6 +22,7 @@ function PatronSession({ officeId }: { officeId: string }) {
   const [tooLate, setTooLate] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
   const viewRef = useRef(false);
+  const snapshotAt = useRef(-Infinity);
   const sendRef = useRef<((msg: Parameters<typeof send>[0]) => void) | null>(null);
   const RESUME_RETRY_MS = 2000;
   const [lastUpdateAt, setLastUpdateAt] = useState(() => Date.now());
@@ -44,12 +45,17 @@ function PatronSession({ officeId }: { officeId: string }) {
       if (own) sendNow({ action: 'resume', ticketNo: own.ticketNo, secret: own.secret });
     },
     onMessage: (msg) => {
+      if (msg.type === 'status' || msg.type === 'board') {
+        if (msg.board.snapshotAt < snapshotAt.current) return;
+        snapshotAt.current = msg.board.snapshotAt;
+      }
       const at = Date.now();
       lastUpdateRef.current = at;
       setLastUpdateAt(at);
       askSheet.current?.receive(msg);
       switch (msg.type) {
         case 'ticket':
+          snapshotAt.current = -Infinity;
           setFailure(null);
           remember({ ticketNo: msg.ticketNo, secret: msg.secret });
           setJoining(false);
@@ -166,6 +172,7 @@ function PatronSession({ officeId }: { officeId: string }) {
           unlockSound();
           setFailure(null);
           setJoining(true);
+          snapshotAt.current = -Infinity;
           viewRef.current = false;
           setView(null);
           send({ action: 'join' });
@@ -206,7 +213,7 @@ function PatronEntry() {
       </div>
     );
   }
-  return <PatronSession officeId={officeId} />;
+  return <PatronSession key={officeId} officeId={officeId} />;
 }
 
 export function PatronApp() {

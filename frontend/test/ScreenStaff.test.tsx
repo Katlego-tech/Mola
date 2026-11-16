@@ -17,7 +17,7 @@ const { ScreenApp } = await import('../src/screen/ScreenApp');
 
 const rules = { confirmWindowSeconds: 120, dropBackPlaces: 3, maxMisses: 2 };
 const board = (over: Partial<Board> = {}): Board =>
-  ({ officeId: 'demo', notesVersion: 0, calling: [], serving: [], waitingCount: 2, upNext: [7, 8], serverTime: Date.now(), rules, ...over });
+  ({ officeId: 'demo', notesVersion: 0, calling: [], serving: [], waitingCount: 2, upNext: [7, 8], snapshotAt: 1000, serverTime: Date.now(), rules, ...over });
 const open = () => act(() => { fake.opts?.onState('open'); fake.opts?.onOpen(); });
 const receive = (m: ServerMessage) => act(() => fake.opts?.onMessage(m));
 const key = 'a-staff-key-for-tests';
@@ -288,4 +288,28 @@ it('keeps the typed notes and allows another save when a save is cut off by a di
   open();
   fireEvent.click(screen.getByRole('button', { name: 'Save notes' }));
   expect(fake.sent.filter((m) => (m as { action: string }).action === 'saveNotes')).toHaveLength(2);
+});
+
+
+it('ignores stale board and status messages after a fresh snapshot and applies ties', () => {
+  ready();
+  const fresh = board({ snapshotAt: Date.now() + 20, calling: [{ ticketNo: 7, desk: 'Desk 1', deadline: null }] });
+  receive({ type: 'board', board: fresh });
+  receive({ type: 'board', board: board({ snapshotAt: fresh.snapshotAt - 1 }) });
+  receive({ type: 'status', ticket: { ticketNo: 7, status: 'waiting', position: 1, desk: null, deadline: null, misses: 0 }, board: board({ snapshotAt: fresh.snapshotAt - 1 }) });
+  expect(screen.getByRole('listitem', { name: 'Ticket 7, Desk 1' })).toBeTruthy();
+  receive({ type: 'board', board: { ...fresh, calling: [{ ticketNo: 9, desk: 'Desk 1', deadline: null }] } });
+  expect(screen.getByText('9')).toBeTruthy();
+});
+
+it('resets board ordering when the office changes', () => {
+  const page = render(<ScreenApp />);
+  open();
+  receive({ type: 'board', board: board({ snapshotAt: 20, calling: [{ ticketNo: 7, desk: 'Desk 1', deadline: null }] }) });
+  window.history.replaceState(null, '', '/screen?office=clinic');
+  page.rerender(<ScreenApp />);
+  open();
+  receive({ type: 'board', board: board({ officeId: 'clinic', snapshotAt: 10, calling: [{ ticketNo: 8, desk: 'Desk 2', deadline: null }] }) });
+  expect(screen.getByRole('listitem', { name: 'Ticket 8, Desk 2' })).toBeTruthy();
+  expect(screen.queryByRole('listitem', { name: 'Ticket 7, Desk 1' })).toBeNull();
 });

@@ -7,7 +7,7 @@ afterEach(cleanup);
 
 const rules = { confirmWindowSeconds: 120, dropBackPlaces: 3, maxMisses: 2 };
 const base: Board = {
-  officeId: 'soweto-clinic', notesVersion: 0, calling: [], serving: [], waitingCount: 0, upNext: [], serverTime: 1_000_000, rules,
+  officeId: 'soweto-clinic', notesVersion: 0, calling: [], serving: [], waitingCount: 0, upNext: [], snapshotAt: 1000, serverTime: 1_000_000, rules,
 };
 
 function renderBoard(board: Board, receivedAt = 0) {

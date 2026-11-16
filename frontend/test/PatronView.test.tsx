@@ -14,7 +14,7 @@ const board: Board = {
   serving: [],
   waitingCount: 5,
   upNext: [40, 41, 42, 43, 44],
-  serverTime: 1_000_000,
+  snapshotAt: 1000, serverTime: 1_000_000,
   rules,
 };
 const waiting: TicketView = { ticketNo: 42, status: 'waiting', position: 3, desk: null, deadline: null, misses: 0 };
@@ -93,9 +93,11 @@ describe('PatronView', () => {
     expect(props.onConfirm).toHaveBeenCalledOnce();
   });
 
-  it('holds Confirm until the call has a deadline', () => {
+  it('allows Confirm without a deadline and hides the timer', () => {
     view({ ticket: { ...waiting, status: 'called', position: null, desk: 'Desk 2', deadline: null } });
-    expect((screen.getByRole('button', { name: 'Confirm' }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole('button', { name: 'Confirm' }) as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.queryByText(en.confirmHint.replace('{{places}}', '3'))).toBeNull();
+    expect(document.querySelector('[style*="scaleX"]')).toBeNull();
   });
 
   it('confirms being served at the desk', () => {

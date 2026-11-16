@@ -37,6 +37,7 @@ function ScreenBoard({ officeId, staff }: { officeId: string; staff: boolean }) 
   const [unlock, setUnlock] = useState<{ open: boolean; error: boolean }>({ open: false, error: false });
   const deskRef = useRef(desk);
   const boardRef = useRef<Board | null>(null);
+  const snapshotAt = useRef(-Infinity);
   const notesDialog = useRef<NotesDialogHandle>(null);
   const summaryPending = useRef(false);
   const [summaryFailed, setSummaryFailed] = useState(false);
@@ -60,6 +61,10 @@ function ScreenBoard({ officeId, staff }: { officeId: string; staff: boolean }) 
       sendNow({ action: 'watch' });
     },
     onMessage: (msg) => {
+      if (msg.type === 'status' || msg.type === 'board') {
+        if (msg.board.snapshotAt < snapshotAt.current) return;
+        snapshotAt.current = msg.board.snapshotAt;
+      }
       notesDialog.current?.receive(msg);
       switch (msg.type) {
         case 'summary':
@@ -67,6 +72,7 @@ function ScreenBoard({ officeId, staff }: { officeId: string; staff: boolean }) 
           setSummaryFailed(false);
           setSummary(msg);
           break;
+        case 'status':
         case 'board': {
           boardRef.current = msg.board;
           setView({ board: msg.board, receivedAt: Date.now() });
@@ -215,5 +221,5 @@ export function ScreenApp() {
     );
   }
   const staff = new URLSearchParams(window.location.search).get('staff') === '1';
-  return <ScreenBoard officeId={officeId} staff={staff} />;
+  return <ScreenBoard key={officeId} officeId={officeId} staff={staff} />;
 }

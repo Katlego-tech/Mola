@@ -86,7 +86,7 @@ function CalledView(props: PatronViewProps & { ticket: TicketView; board: Board 
       footer={
         <>
           {props.failure && <p role="alert" className="px-1 font-semibold text-go-ink">{props.failure}</p>}
-          <Button variant="onGo" onClick={props.onConfirm} disabled={left === null || left <= 0}>
+          <Button variant="onGo" onClick={props.onConfirm} disabled={left !== null && left <= 0}>
             <Check weight="bold" aria-hidden />
             {t('confirm')}
           </Button>

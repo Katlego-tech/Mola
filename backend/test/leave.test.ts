@@ -23,7 +23,7 @@ const event = (suppliedSecret = secret) => ({
   requestContext: { routeKey: 'leave', connectionId: 'phone' },
   body: JSON.stringify({ action: 'leave', ticketNo: 42, secret: suppliedSecret }),
 });
-const snapshot = (tickets: Ticket[]): OfficeSnapshot => ({ office: null, tickets, screens: [] });
+const snapshot = (tickets: Ticket[]): OfficeSnapshot => ({ readAt: 1000, office: null, tickets, screens: [] });
 
 beforeEach(() => {
   vi.resetAllMocks();

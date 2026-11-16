@@ -17,4 +17,4 @@ export interface Connection {
 
 export interface Screen { officeId: string; connectionId: string; expiresAt: number; }
 
-export interface OfficeSnapshot { office: Office | null; tickets: Ticket[]; screens: Screen[]; }
+export interface OfficeSnapshot { readAt: number; office: Office | null; tickets: Ticket[]; screens: Screen[]; }
