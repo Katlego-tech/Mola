@@ -273,3 +273,19 @@ it('keeps the notes retry available while offline', () => {
   expect(screen.getByText("Couldn't load the notes. Try again.")).toBeTruthy();
   expect((screen.getByLabelText('Notes') as HTMLTextAreaElement).disabled).toBe(true);
 });
+
+it('keeps the typed notes and allows another save when a save is cut off by a disconnect', () => {
+  sessionStorage.setItem('mola:staff:demo', key);
+  ready();
+  fireEvent.click(screen.getByRole('button', { name: 'Office notes' }));
+  receive({ type: 'notes', lang: 'en', version: 3, text: 'Old notes', translated: false });
+  fireEvent.change(screen.getByLabelText('Notes'), { target: { value: 'New notes' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save notes' }));
+  act(() => fake.opts?.onState('backoff'));
+  expect(screen.getByText("The notes weren't saved. Your text is kept. Save again once the screen reconnects.")).toBeTruthy();
+  expect((screen.getByLabelText('Notes') as HTMLTextAreaElement).value).toBe('New notes');
+  expect((screen.getByRole('button', { name: 'Save notes' }) as HTMLButtonElement).disabled).toBe(true);
+  open();
+  fireEvent.click(screen.getByRole('button', { name: 'Save notes' }));
+  expect(fake.sent.filter((m) => (m as { action: string }).action === 'saveNotes')).toHaveLength(2);
+});

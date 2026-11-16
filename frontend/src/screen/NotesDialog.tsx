@@ -22,6 +22,7 @@ export function NotesDialog({ ref, online, onLoad, onSave, onSaved }: {
   const [baseVersion, setBaseVersion] = useState<number | null>(null);
   const [loadFailed, setLoadFailed] = useState(false);
   const [pending, setPending] = useState(false);
+  const [saveFailed, setSaveFailed] = useState(false);
   const phase = useRef<'closed' | 'loading' | 'ready' | 'saving' | 'conflict'>('closed');
   const [conflict, setConflict] = useState(false);
   const [serverText, setServerText] = useState<string | null>(null);
@@ -33,6 +34,13 @@ export function NotesDialog({ ref, online, onLoad, onSave, onSaved }: {
   };
   const interrupt = () => {
     if (phase.current === 'loading' || phase.current === 'conflict') setLoadFailed(true);
+    // A save whose reply is lost keeps the typed text and can be sent again; if the first one did
+    // land, the retry comes back as a conflict, which also keeps the text.
+    if (phase.current === 'saving') {
+      phase.current = 'ready';
+      setPending(false);
+      setSaveFailed(true);
+    }
   };
 
   useImperativeHandle(ref, () => ({
@@ -92,8 +100,9 @@ export function NotesDialog({ ref, online, onLoad, onSave, onSaved }: {
           <Dialog.Description className="text-[2.2vh] text-muted">Patrons read these on their phones, and Amazon Nova answers their questions from them. Say what to bring, opening hours, and anything that sends people away.</Dialog.Description>
           <form className="grid gap-[2vh]" onSubmit={(e) => {
             e.preventDefault();
-            if (baseVersion === null || phase.current !== 'ready') return;
+            if (baseVersion === null || phase.current !== 'ready' || !online) return;
             phase.current = 'saving';
+            setSaveFailed(false);
             setPending(true);
             onSave(text, baseVersion);
           }}>
@@ -106,11 +115,12 @@ export function NotesDialog({ ref, online, onLoad, onSave, onSaved }: {
               <p>Couldn't load the notes. Try again.</p>
               <Button type="button" onClick={load}>Try again</Button>
             </div>}
+            {saveFailed && <p role="alert" className="text-[2.2vh] text-ticket">The notes weren't saved. Your text is kept. Save again once the screen reconnects.</p>}
             {conflict && <p role="alert" className="text-[2.2vh] text-ticket">Someone else changed the notes. Your text is kept. Check theirs, then save again.</p>}
             {serverText !== null && <p className="whitespace-pre-line rounded-[14px] bg-ground p-[1vw] text-[2.2vh]">{serverText}</p>}
             <div className="flex justify-end gap-[1vw]">
               <Button type="button" onClick={close} className="border-2 border-line bg-transparent px-[2vw] py-[1.8vh] text-[2.6vh] text-text">Cancel</Button>
-              <Button type="submit" variant="ticket" disabled={baseVersion === null || pending} className="px-[2.4vw] py-[1.8vh] text-[2.6vh]">Save notes</Button>
+              <Button type="submit" variant="ticket" disabled={baseVersion === null || pending || !online} className="px-[2.4vw] py-[1.8vh] text-[2.6vh]">Save notes</Button>
             </div>
           </form>
         </Dialog.Content>

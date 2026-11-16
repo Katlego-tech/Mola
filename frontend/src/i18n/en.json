@@ -64,6 +64,6 @@
   "yourQuestion": "Your question",
   "ask": "Ask",
   "askHint": "Don't type your ID number or other personal details.",
-  "asksLeftOne": "1 question left on this ticket.",
+  "asksLeftOne": "{n} question left on this ticket.",
   "asksLeftMany": "{n} questions left on this ticket."
 }
