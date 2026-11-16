@@ -23,7 +23,6 @@ It is built to cost nothing while the office is closed.
 
 - Live: https://d2o4sybugfoqv0.cloudfront.net/screen?office=demo (the counter screen; its QR code
   opens the patron page). Staff controls: add `&staff=1`.
-- Recorded walkthrough: the 3-minute video link goes here once it is recorded.
 
 ## Architecture
 
@@ -97,7 +96,8 @@ scripts/deploy-web.sh dev
 ```
 
 Then open `https://<site>/screen?office=demo` on a screen, scan its QR code with a phone, and add
-`&staff=1` to the screen's address to call patrons. Any lowercase name works as an office id.
+`&staff=1` to the screen's address to call patrons. An office id is up to 40 lowercase letters, digits or hyphens (`soweto-clinic`); an office
+exists as soon as its first ticket is issued.
 
 Checks:
 
