@@ -298,18 +298,83 @@ it('keeps the freshest called snapshot across status and board messages, applyin
   expect(screen.getByText('Confirmed. Desk 1 is expecting you.')).toBeTruthy();
 });
 
-it('lets Confirm retry while the called task is being prepared', () => {
-  localStorage.setItem('mola:demo', JSON.stringify({ ticketNo: 7, secret }));
-  render(<PatronApp />);
-  open();
-  receive({ type: 'status', ticket: ticket({ status: 'called', desk: 'Desk 1' }), board });
-  fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
-  receive({ type: 'error', code: 'not_called', message: 'Not called' });
-  fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
-  expect(sent().filter(m => m.action === 'confirm')).toEqual([
-    { action: 'confirm', ticketNo: 7, secret }, { action: 'confirm', ticketNo: 7, secret },
-  ]);
-  expect(screen.queryByText('Not called')).toBeNull();
+describe('confirming a called ticket', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    localStorage.setItem('mola:demo', JSON.stringify({ ticketNo: 7, secret }));
+    render(<PatronApp />);
+    open();
+    receive({ type: 'status', ticket: ticket({ status: 'called', desk: 'Desk 1' }), board });
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    expect((screen.getByRole('button', { name: 'Confirming…' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+  afterEach(() => {
+    cleanup();
+    vi.useRealTimers();
+  });
+
+  it('shows pending, retries after one second and clears pending when serving', () => {
+    const pending = screen.getByRole('button', { name: 'Confirming…' }) as HTMLButtonElement;
+    expect(pending.disabled).toBe(true);
+    fireEvent.click(pending);
+    receive({ type: 'error', code: 'not_called', message: 'Not called' });
+    act(() => { vi.advanceTimersByTime(999); });
+    expect(sent().filter(m => m.action === 'confirm')).toHaveLength(1);
+    act(() => { vi.advanceTimersByTime(1); });
+    expect(sent().filter(m => m.action === 'confirm')).toEqual([
+      { action: 'confirm', ticketNo: 7, secret }, { action: 'confirm', ticketNo: 7, secret },
+    ]);
+    receive({ type: 'error', code: 'not_called', message: 'Not called' });
+    receive({ type: 'status', ticket: ticket({ status: 'serving', desk: 'Desk 1' }), board });
+    expect(screen.queryByText('Confirming…')).toBeNull();
+    expect(screen.getByText('Confirmed. Desk 1 is expecting you.')).toBeTruthy();
+    act(() => { vi.advanceTimersByTime(1000); });
+    expect(sent().filter(m => m.action === 'confirm')).toHaveLength(2);
+    receive({ type: 'status', ticket: ticket({ status: 'called', desk: 'Desk 1' }), board });
+    expect((screen.getByRole('button', { name: 'Confirm' }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('gives up after five total attempts and allows another tap', () => {
+    for (let attempt = 1; attempt <= 5; attempt++) {
+      expect(sent().filter(m => m.action === 'confirm')).toHaveLength(attempt);
+      receive({ type: 'error', code: 'not_called', message: 'Not called' });
+      act(() => { vi.advanceTimersByTime(1000); });
+    }
+    expect(sent().filter(m => m.action === 'confirm')).toHaveLength(5);
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    expect(sent().filter(m => m.action === 'confirm')).toHaveLength(6);
+    expect(screen.getByRole('button', { name: 'Confirming…' })).toBeTruthy();
+  });
+
+  it('stops when the ticket leaves called', () => {
+    receive({ type: 'error', code: 'not_called', message: 'Not called' });
+    receive({ type: 'status', ticket: ticket(), board });
+    act(() => { vi.advanceTimersByTime(1000); });
+    expect(sent().filter(m => m.action === 'confirm')).toHaveLength(1);
+    expect(screen.queryByText('Confirming…')).toBeNull();
+    receive({ type: 'error', code: 'not_called', message: 'Not called' });
+    act(() => { vi.advanceTimersByTime(1000); });
+    expect(sent().filter(m => m.action === 'confirm')).toHaveLength(1);
+  });
+
+  it.each(['too_late', 'disconnect', 'unmount'])('stops on %s', reason => {
+    receive({ type: 'error', code: 'not_called', message: 'Not called' });
+    if (reason === 'too_late') receive({ type: 'notice', code: 'too_late' });
+    else if (reason === 'disconnect') act(() => fake.opts?.onState('backoff'));
+    else cleanup();
+    expect(screen.queryByText('Confirming…')).toBeNull();
+    act(() => { vi.advanceTimersByTime(1000); });
+    expect(sent().filter(m => m.action === 'confirm')).toHaveLength(1);
+  });
+
+  it('keeps pending across called snapshots and ignores duplicate errors', () => {
+    receive({ type: 'error', code: 'not_called', message: 'Not called' });
+    receive({ type: 'status', ticket: ticket({ status: 'called', desk: 'Desk 1', deadline: board.serverTime + 60_000 }), board });
+    receive({ type: 'error', code: 'not_called', message: 'Not called' });
+    expect(screen.getByRole('button', { name: 'Confirming…' })).toBeTruthy();
+    act(() => { vi.advanceTimersByTime(1000); });
+    expect(sent().filter(m => m.action === 'confirm')).toHaveLength(2);
+  });
 });
 
 it.each([null, board.serverTime + 60_000])('leaves from the called view with deadline %s', deadline => {

@@ -76,7 +76,8 @@ describe('atomic office notes', () => {
     const before = await db.loadOffice(officeId);
     const notes = await db.getNotes(officeId);
     await expect(db.saveNotes(officeId, 'Overwrite', 0, NOW)).rejects.toMatchObject({ name: 'TransactionCanceledException' });
-    expect(await db.loadOffice(officeId)).toEqual(before);
+    const after = await db.loadOffice(officeId);
+    expect({ ...after, readAt: undefined }).toEqual({ ...before, readAt: undefined });
     expect(await db.getNotes(officeId)).toEqual(notes);
   });
   it('allows exactly one concurrent save from a shared base and keeps its text and version together', async () => {

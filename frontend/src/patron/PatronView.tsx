@@ -24,6 +24,7 @@ export interface PatronViewProps {
   resuming: boolean;
   /** "Get a number" was tapped and the ticket has not arrived yet. */
   joining: boolean;
+  confirming?: boolean;
   /** The server said the confirm came after the window closed. */
   tooLate: boolean;
   lastUpdateAt: number;
@@ -86,9 +87,9 @@ function CalledView(props: PatronViewProps & { ticket: TicketView; board: Board 
       footer={
         <>
           {props.failure && <p role="alert" className="px-1 font-semibold text-go-ink">{props.failure}</p>}
-          <Button variant="onGo" onClick={props.onConfirm} disabled={left !== null && left <= 0}>
+          <Button variant="onGo" onClick={props.onConfirm} disabled={props.confirming || (left !== null && left <= 0)}>
             <Check weight="bold" aria-hidden />
-            {t('confirm')}
+            {t(props.confirming ? 'confirming' : 'confirm')}
           </Button>
           <LeaveDialog onLeave={props.onLeave} triggerLabel={t('cannotCome')} onGo />
         </>
