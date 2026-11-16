@@ -5,11 +5,11 @@ import { mockClient } from 'aws-sdk-client-mock';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { handler } from '../src/handlers/notify-called';
 import type { NotifyCalledEvent } from '../src/handlers/notify-called';
-import { broadcast } from '../src/lib/broadcast';
+import { requestBroadcast } from '../src/lib/broadcast';
 import { storeTaskToken } from '../src/lib/db';
 
 vi.mock('../src/lib/db', () => ({ storeTaskToken: vi.fn() }));
-vi.mock('../src/lib/broadcast', () => ({ broadcast: vi.fn() }));
+vi.mock('../src/lib/broadcast', () => ({ requestBroadcast: vi.fn() }));
 
 const sdk = mockClient(SFNClient);
 const now = 1_800_000_000_500;
@@ -25,7 +25,7 @@ beforeEach(() => {
   vi.stubEnv('MAX_MISSES', '2');
   event = { officeId: 'demo', ticketNo: 42, desk: 'Desk 1', confirmWindowSeconds: 30, calledAt: '2027-01-01T08:00:00.000Z', taskToken: randomUUID() };
   vi.mocked(storeTaskToken).mockResolvedValue(undefined);
-  vi.mocked(broadcast).mockResolvedValue(undefined);
+  vi.mocked(requestBroadcast).mockResolvedValue(undefined);
 });
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 
@@ -34,33 +34,31 @@ function lostRace(): ConditionalCheckFailedException {
 }
 
 describe('NotifyCalled', () => {
-  it('stores the token and event-based deadline before broadcasting with current rules', async () => {
-    vi.mocked(broadcast).mockImplementation(() => {
+  it('stores the token and event-based deadline before requesting a refresh', async () => {
+    vi.mocked(requestBroadcast).mockImplementation(() => {
       expect(storeTaskToken).toHaveBeenCalledExactlyOnceWith('demo', 42, event.taskToken, now + 30_000, event.calledAt);
       return Promise.resolve();
     });
     await expect(handler(event)).resolves.toBeUndefined();
-    expect(broadcast).toHaveBeenCalledExactlyOnceWith('demo', {
-      confirmWindowSeconds: 120, dropBackPlaces: 3, maxMisses: 2,
-    });
+    expect(requestBroadcast).toHaveBeenCalledExactlyOnceWith('demo');
     expect(sdk.calls()).toHaveLength(0);
   });
 
-  it('sends SendTaskFailure with Patron.Left on a failed condition and does not broadcast', async () => {
+  it('sends SendTaskFailure with Patron.Left on a failed condition and does not requestBroadcast', async () => {
     vi.mocked(storeTaskToken).mockRejectedValue(lostRace());
     await expect(handler(event)).resolves.toBeUndefined();
     expect(sdk.commandCalls(SendTaskFailureCommand)).toHaveLength(1);
     expect(sdk.commandCalls(SendTaskFailureCommand)[0]?.args[0].input).toEqual({
       taskToken: event.taskToken, error: 'Patron.Left', cause: 'Ticket is no longer being called',
     });
-    expect(broadcast).not.toHaveBeenCalled();
+    expect(requestBroadcast).not.toHaveBeenCalled();
   });
 
-  it.each(['TaskTimedOut', 'TaskDoesNotExist', 'InvalidToken'])('returns without broadcasting when the callback is already closed (%s)', async name => {
+  it.each(['TaskTimedOut', 'TaskDoesNotExist', 'InvalidToken'])('returns without requesting a refresh when the callback is already closed (%s)', async name => {
     vi.mocked(storeTaskToken).mockRejectedValue(lostRace());
     sdk.on(SendTaskFailureCommand).rejects(Object.assign(new Error('closed'), { name }));
     await expect(handler(event)).resolves.toBeUndefined();
-    expect(broadcast).not.toHaveBeenCalled();
+    expect(requestBroadcast).not.toHaveBeenCalled();
   });
 
   it('throws other store errors unchanged for Step Functions to handle', async () => {
@@ -68,7 +66,7 @@ describe('NotifyCalled', () => {
     vi.mocked(storeTaskToken).mockRejectedValue(error);
     await expect(handler(event)).rejects.toBe(error);
     expect(sdk.calls()).toHaveLength(0);
-    expect(broadcast).not.toHaveBeenCalled();
+    expect(requestBroadcast).not.toHaveBeenCalled();
   });
 
   it('throws callback errors unchanged', async () => {
@@ -76,12 +74,12 @@ describe('NotifyCalled', () => {
     vi.mocked(storeTaskToken).mockRejectedValue(lostRace());
     sdk.on(SendTaskFailureCommand).rejects(error);
     await expect(handler(event)).rejects.toBe(error);
-    expect(broadcast).not.toHaveBeenCalled();
+    expect(requestBroadcast).not.toHaveBeenCalled();
   });
 
-  it('throws broadcast errors unchanged, including a conditional error', async () => {
+  it('throws requestBroadcast errors unchanged, including a conditional error', async () => {
     const error = lostRace();
-    vi.mocked(broadcast).mockRejectedValue(error);
+    vi.mocked(requestBroadcast).mockRejectedValue(error);
     await expect(handler(event)).rejects.toBe(error);
     expect(sdk.calls()).toHaveLength(0);
   });

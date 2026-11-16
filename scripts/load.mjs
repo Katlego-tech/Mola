@@ -3,12 +3,15 @@
 // connected phone has heard about it? The goal is p95 <= 1 s.
 //
 //   node scripts/load.mjs --url wss://... --staff-key KEY [--clients 100] [--rounds 5] [--batch 5]
+//   Add --broadcast-log FILE to report queue latency from JSON-lines broadcaster logs for this run.
 //
 // Opens --clients patron connections that each take a ticket in a fresh office, then a screen calls
 // the next patron --rounds times, from a different desk each round (a desk still calling someone
 // is busy). For each call it times, per phone, the gap from the moment the
 // call was sent to the first status that phone receives afterwards. Reports p50, p95 and max over
 // every phone and round, and exits non-zero if p95 is over 1 s. Every phone leaves the queue at the end.
+
+import { readFileSync } from 'node:fs';
 
 const args = Object.fromEntries(
   process.argv.slice(2).reduce((pairs, arg, i, all) => {
@@ -144,5 +147,33 @@ const ms = (t) => (Number.isFinite(t) ? `${Math.round(t)} ms` : 'never');
 const p95 = pct(0.95);
 console.log(`\n  phones x rounds: ${samples.length}, never heard within 10 s: ${missed}`);
 console.log(`  p50 ${ms(pct(0.5))}   p95 ${ms(p95)}   max ${ms(sorted.at(-1))}   (goal: p95 <= ${GOAL_MS} ms)`);
+// Queue latency is measured on the server; the WebSocket snapshot cannot isolate it.
+if (args['broadcast-log']) {
+  const queueSamples = [];
+  for (const line of readFileSync(args['broadcast-log'], 'utf8').split('\n').filter((line) => line.trim())) {
+    let message;
+    try {
+      const entry = JSON.parse(line);
+      message = typeof entry?.message === 'string' ? JSON.parse(entry.message) : entry?.message ?? entry;
+    } catch {
+      continue; // Runtime and error logs can appear alongside the structured latency entries.
+    }
+    if (!message) continue;
+    if (message.event === 'broadcast_queue_latency' && message.officeId === office &&
+      Number.isFinite(message.queueLatencyMs) && message.queueLatencyMs >= 0) {
+      queueSamples.push(message.queueLatencyMs);
+    }
+  }
+  queueSamples.sort((x, y) => x - y);
+  if (queueSamples.length) {
+    const queueP95 = queueSamples[Math.min(queueSamples.length - 1, Math.floor(0.95 * queueSamples.length))];
+    console.log(`  queue component: p95 ${ms(queueP95)}, max ${ms(queueSamples.at(-1))} (${queueSamples.length} office batches)`);
+    console.log('  queue and phone samples are separate; their percentiles do not form an exact latency share');
+  } else {
+    console.log('  queue component: no latency logs visible for this office');
+  }
+} else {
+  console.log('  queue component: not visible over WebSocket; supply --broadcast-log with broadcaster JSON-lines logs');
+}
 await cleanup();
 process.exit(missed === 0 && p95 <= GOAL_MS ? 0 : 1);

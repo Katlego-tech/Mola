@@ -1,7 +1,6 @@
 import type { ClientEvent } from './client';
-import { broadcast } from '../lib/broadcast';
+import { requestBroadcast } from '../lib/broadcast';
 import { callNext } from '../lib/calling';
-import { rules } from '../lib/config';
 import { getConnection, saveNotes } from '../lib/db';
 import { parseClientMessage } from '../lib/messages';
 import { OK, replyError } from '../lib/reply';
@@ -45,7 +44,7 @@ export async function handler(event: ClientEvent) {
         return OK;
       }
       await send(connectionId, { type: 'notes', lang: 'en', version, text: msg.text, translated: false });
-      await broadcast(conn.officeId, rules());
+      await requestBroadcast(conn.officeId);
       return OK;
     }
     const result = await callNext(conn.officeId, msg.desk);
@@ -53,7 +52,7 @@ export async function handler(event: ClientEvent) {
       await replyError(connectionId, 'desk_busy');
     } else if ('empty' in result) {
       await send(connectionId, { type: 'notice', code: 'queue_empty' });
-      await broadcast(conn.officeId, rules());
+      await requestBroadcast(conn.officeId);
     }
   } catch (error) {
     if (!savingNotes) console.error('Staff handler failed', error);

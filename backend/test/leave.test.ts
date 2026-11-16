@@ -8,7 +8,7 @@ const db = vi.hoisted(() => ({
   getConnection: vi.fn(), loadOffice: vi.fn(), markLeft: vi.fn(), finishServing: vi.fn(),
 }));
 const ws = vi.hoisted(() => ({ send: vi.fn() }));
-const fanout = vi.hoisted(() => ({ broadcast: vi.fn() }));
+const fanout = vi.hoisted(() => ({ requestBroadcast: vi.fn() }));
 vi.mock('../src/lib/db', () => db);
 vi.mock('../src/lib/ws', () => ws);
 vi.mock('../src/lib/broadcast', () => fanout);
@@ -16,7 +16,6 @@ const { handler } = await import('../src/handlers/client');
 const sfn = mockClient(SFNClient);
 const now = Date.parse('2027-03-01T08:00:00.123Z');
 const nowIso = new Date(now).toISOString();
-const officeRules = { confirmWindowSeconds: 120, dropBackPlaces: 3, maxMisses: 2 };
 let secret: string;
 let ticket: Ticket;
 const event = (suppliedSecret = secret) => ({
@@ -46,12 +45,12 @@ beforeEach(() => {
 afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); });
 
 function expectBroadcast() {
-  expect(fanout.broadcast).toHaveBeenCalledExactlyOnceWith('demo', officeRules);
+  expect(fanout.requestBroadcast).toHaveBeenCalledExactlyOnceWith('demo');
   expect(ws.send).not.toHaveBeenCalled();
 }
 
 describe('leave', () => {
-  it.each(['missing', 'wrong secret'])('refuses a %s ticket without writes or broadcast', async kind => {
+  it.each(['missing', 'wrong secret'])('refuses a %s ticket without writes or requestBroadcast', async kind => {
     if (kind === 'missing') db.loadOffice.mockResolvedValue(snapshot([]));
     expect(await handler(event(kind === 'missing' ? secret : randomUUID()))).toEqual({ statusCode: 200 });
     expect(db.loadOffice).toHaveBeenCalledExactlyOnceWith('demo');
@@ -59,21 +58,21 @@ describe('leave', () => {
     expect(sfn.calls()).toHaveLength(0);
     expect(db.markLeft).not.toHaveBeenCalled();
     expect(db.finishServing).not.toHaveBeenCalled();
-    expect(fanout.broadcast).not.toHaveBeenCalled();
+    expect(fanout.requestBroadcast).not.toHaveBeenCalled();
   });
 
-  it.each(['waiting', 'called'] as const)('marks a %s ticket without a token left, then broadcasts', async status => {
+  it.each(['waiting', 'called'] as const)('marks a %s ticket without a token left, then requests a refresh', async status => {
     ticket.status = status;
     expect(await handler(event())).toEqual({ statusCode: 200 });
     expect(db.loadOffice).toHaveBeenCalledExactlyOnceWith('demo');
     expect(db.markLeft).toHaveBeenCalledExactlyOnceWith('demo', 42, status, nowIso);
-    expect(db.markLeft).toHaveBeenCalledBefore(fanout.broadcast);
+    expect(db.markLeft).toHaveBeenCalledBefore(fanout.requestBroadcast);
     expect(db.finishServing).not.toHaveBeenCalled();
     expect(sfn.calls()).toHaveLength(0);
     expectBroadcast();
   });
 
-  it('fails the called task with Patron.Left before marking left and broadcasting', async () => {
+  it('fails the called task with Patron.Left before marking left and requesting a refresh', async () => {
     ticket.status = 'called';
     ticket.taskToken = randomUUID();
     const started = Promise.withResolvers<undefined>();
@@ -86,7 +85,7 @@ describe('leave', () => {
     await started.promise;
     await vi.advanceTimersByTimeAsync(1000);
     expect(db.markLeft).not.toHaveBeenCalled();
-    expect(fanout.broadcast).not.toHaveBeenCalled();
+    expect(fanout.requestBroadcast).not.toHaveBeenCalled();
     complete?.();
     expect(await pending).toEqual({ statusCode: 200 });
     expect(sfn.commandCalls(SendTaskFailureCommand).map(call => call.args[0].input)).toEqual([
@@ -94,22 +93,22 @@ describe('leave', () => {
     ]);
     expect(db.loadOffice).toHaveBeenCalledExactlyOnceWith('demo');
     expect(db.markLeft).toHaveBeenCalledExactlyOnceWith('demo', 42, 'called', nowIso);
-    expect(db.markLeft).toHaveBeenCalledBefore(fanout.broadcast);
+    expect(db.markLeft).toHaveBeenCalledBefore(fanout.requestBroadcast);
     expect(db.finishServing).not.toHaveBeenCalled();
     expectBroadcast();
   });
 
-  it('finishes a serving ticket, then broadcasts', async () => {
+  it('finishes a serving ticket, then requests a refresh', async () => {
     ticket.status = 'serving';
     await handler(event());
     expect(db.finishServing).toHaveBeenCalledExactlyOnceWith('demo', 42, nowIso);
-    expect(db.finishServing).toHaveBeenCalledBefore(fanout.broadcast);
+    expect(db.finishServing).toHaveBeenCalledBefore(fanout.requestBroadcast);
     expect(db.markLeft).not.toHaveBeenCalled();
     expect(sfn.calls()).toHaveLength(0);
     expectBroadcast();
   });
 
-  it.each<TicketStatus>(['done', 'left', 'no_show'])('only broadcasts for a %s ticket', async status => {
+  it.each<TicketStatus>(['done', 'left', 'no_show'])('only requests a refresh for a %s ticket', async status => {
     ticket.status = status;
     await handler(event());
     expect(db.markLeft).not.toHaveBeenCalled();
@@ -156,7 +155,7 @@ describe('leave', () => {
     expectBroadcast();
   });
 
-  it.each(['waiting', 'called', 'serving'] as const)('ignores a conditional failure writing %s and broadcasts', async status => {
+  it.each(['waiting', 'called', 'serving'] as const)('ignores a conditional failure writing %s and requests a refresh', async status => {
     ticket.status = status;
     const write = status === 'serving' ? db.finishServing : db.markLeft;
     write.mockRejectedValue(Object.assign(new Error('Race lost'), { name: 'ConditionalCheckFailedException' }));
@@ -165,7 +164,7 @@ describe('leave', () => {
     expectBroadcast();
   });
 
-  it.each(['load', 'task', 'markLeft', 'finishServing', 'reload', 'broadcast'])('propagates other %s errors', async source => {
+  it.each(['load', 'task', 'markLeft', 'finishServing', 'reload', 'requestBroadcast'])('propagates other %s errors', async source => {
     const error = new Error('Unavailable');
     if (source === 'load') db.loadOffice.mockRejectedValue(error);
     if (source === 'task' || source === 'reload') {
@@ -180,8 +179,8 @@ describe('leave', () => {
       ticket.status = 'serving';
       db.finishServing.mockRejectedValue(error);
     }
-    if (source === 'broadcast') fanout.broadcast.mockRejectedValue(error);
+    if (source === 'requestBroadcast') fanout.requestBroadcast.mockRejectedValue(error);
     await expect(handler(event())).rejects.toBe(error);
-    if (source !== 'broadcast') expect(fanout.broadcast).not.toHaveBeenCalled();
+    if (source !== 'requestBroadcast') expect(fanout.requestBroadcast).not.toHaveBeenCalled();
   });
 });

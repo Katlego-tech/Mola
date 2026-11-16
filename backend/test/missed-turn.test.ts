@@ -6,7 +6,7 @@ import { positions, waitingLine } from '../src/lib/ordering';
 const db = vi.hoisted(() => ({ loadOffice: vi.fn(), dropBack: vi.fn(), markNoShow: vi.fn(), markLeft: vi.fn(), revertClaim: vi.fn() }));
 const ws = vi.hoisted(() => ({ send: vi.fn() }));
 const calling = vi.hoisted(() => ({ callNext: vi.fn() }));
-const fanout = vi.hoisted(() => ({ broadcast: vi.fn() }));
+const fanout = vi.hoisted(() => ({ requestBroadcast: vi.fn() }));
 vi.mock('../src/lib/db', () => db);
 vi.mock('../src/lib/ws', () => ws);
 vi.mock('../src/lib/calling', () => calling);
@@ -15,7 +15,6 @@ const { handler } = await import('../src/handlers/missed-turn');
 const now = Date.parse('2027-03-01T08:00:00.123Z');
 const nowIso = new Date(now).toISOString();
 const calledAt = new Date(now - 120000).toISOString();
-const officeRules = { confirmWindowSeconds: 120, dropBackPlaces: 3, maxMisses: 2 };
 const event = (reason: 'timeout' | 'left' | 'error') => ({ officeId: 'demo', ticketNo: 42, desk: 'Desk 2', calledAt, reason });
 let ticket: Ticket;
 let snapshot: OfficeSnapshot;
@@ -42,11 +41,11 @@ function addWaiting(count: number) {
   }
 }
 function expectBroadcast() {
-  expect(fanout.broadcast).toHaveBeenCalledExactlyOnceWith('demo', officeRules);
+  expect(fanout.requestBroadcast).toHaveBeenCalledExactlyOnceWith('demo');
 }
 function expectAdvance() {
   expect(calling.callNext).toHaveBeenCalledExactlyOnceWith('demo', 'Desk 2');
-  expect(calling.callNext).toHaveBeenCalledBefore(fanout.broadcast);
+  expect(calling.callNext).toHaveBeenCalledBefore(fanout.requestBroadcast);
   expectBroadcast();
 }
 function expectNoWrites() {
@@ -58,7 +57,7 @@ function expectNoWrites() {
 }
 
 describe('timeout', () => {
-  it('drops back to position 4 of 7, notifies, calls next, then broadcasts', async () => {
+  it('drops back to position 4 of 7, notifies, calls next, then requests a refresh', async () => {
     addWaiting(6);
     // Expired and non-waiting tickets must not influence the gap or the notice.
     snapshot.tickets.push({ ...ticket, ticketNo: 1, status: 'waiting', queueKey: 1, expiresAt: now / 1000 });
@@ -127,7 +126,7 @@ describe('timeout', () => {
 });
 
 describe('left and error', () => {
-  it('marks a called ticket left, calls next, then broadcasts', async () => {
+  it('marks a called ticket left, calls next, then requests a refresh', async () => {
     await handler(event('left'));
     expect(db.markLeft).toHaveBeenCalledExactlyOnceWith('demo', 42, 'called', nowIso);
     expect(db.markLeft).toHaveBeenCalledBefore(calling.callNext);
@@ -135,10 +134,10 @@ describe('left and error', () => {
     expectAdvance();
   });
 
-  it('reverts an error claim and broadcasts without calling next', async () => {
+  it('reverts an error claim and requests a refresh without calling next', async () => {
     await handler(event('error'));
     expect(db.revertClaim).toHaveBeenCalledExactlyOnceWith('demo', 42);
-    expect(db.revertClaim).toHaveBeenCalledBefore(fanout.broadcast);
+    expect(db.revertClaim).toHaveBeenCalledBefore(fanout.requestBroadcast);
     expect(calling.callNext).not.toHaveBeenCalled();
     expect(ws.send).not.toHaveBeenCalled();
     expectBroadcast();
@@ -189,7 +188,7 @@ describe('races and failures', () => {
     write.mockRejectedValue(error);
     await expect(handler(event(reason))).rejects.toBe(error);
     expect(calling.callNext).not.toHaveBeenCalled();
-    expect(fanout.broadcast).not.toHaveBeenCalled();
+    expect(fanout.requestBroadcast).not.toHaveBeenCalled();
     expect(ws.send).not.toHaveBeenCalled();
   });
 
@@ -206,12 +205,12 @@ describe('races and failures', () => {
     });
   }
 
-  it.each(['load', 'callNext', 'broadcast'])('throws other %s errors', async source => {
+  it.each(['load', 'callNext', 'requestBroadcast'])('throws other %s errors', async source => {
     const error = new Error('Unavailable');
     if (source === 'load') db.loadOffice.mockRejectedValue(error);
     if (source === 'callNext') calling.callNext.mockRejectedValue(error);
-    if (source === 'broadcast') fanout.broadcast.mockRejectedValue(error);
+    if (source === 'requestBroadcast') fanout.requestBroadcast.mockRejectedValue(error);
     await expect(handler(event('timeout'))).rejects.toBe(error);
-    if (source !== 'broadcast') expect(fanout.broadcast).not.toHaveBeenCalled();
+    if (source !== 'requestBroadcast') expect(fanout.requestBroadcast).not.toHaveBeenCalled();
   });
 });

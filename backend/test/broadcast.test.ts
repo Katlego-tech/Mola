@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { broadcast } from '../src/lib/broadcast';
+import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';
+import { mockClient } from 'aws-sdk-client-mock';
+import { broadcast, requestBroadcast } from '../src/lib/broadcast';
 import { deleteScreen, loadOffice, removeTicketConnection } from '../src/lib/db';
 import type { Board, ServerMessage } from '../src/lib/messages';
 import type { OfficeSnapshot, Ticket } from '../src/lib/model';
@@ -9,6 +11,7 @@ import { send } from '../src/lib/ws';
 vi.mock('../src/lib/db', () => ({ loadOffice: vi.fn(), removeTicketConnection: vi.fn(), deleteScreen: vi.fn() }));
 vi.mock('../src/lib/ws', () => ({ send: vi.fn() }));
 
+const sqs = mockClient(SQSClient);
 const nowMs = 1_800_000_000_500;
 const rules: Board['rules'] = { confirmWindowSeconds: 30, dropBackPlaces: 3, maxMisses: 2 };
 function ticket(ticketNo: number, overrides: Partial<Ticket> = {}): Ticket {
@@ -26,6 +29,12 @@ function snapshot(tickets: Ticket[] = [], screenIds: string[] = []): OfficeSnaps
 
 beforeEach(() => {
   vi.resetAllMocks();
+  sqs.reset();
+  sqs.on(SendMessageCommand).resolves({});
+  vi.stubEnv('BROADCAST_QUEUE_URL', 'https://sqs.af-south-1.amazonaws.com/queue/broadcast.fifo');
+  vi.stubEnv('CONFIRM_WINDOW_SECONDS', '30');
+  vi.stubEnv('DROP_BACK_PLACES', '3');
+  vi.stubEnv('MAX_MISSES', '2');
   vi.spyOn(Date, 'now').mockReturnValue(nowMs);
   vi.spyOn(console, 'error').mockImplementation(() => undefined);
   vi.mocked(send).mockResolvedValue('sent');
@@ -33,7 +42,7 @@ beforeEach(() => {
   vi.mocked(deleteScreen).mockResolvedValue(undefined);
   vi.mocked(loadOffice).mockResolvedValue(snapshot());
 });
-afterEach(() => { vi.restoreAllMocks(); });
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 
 describe('broadcast', () => {
   it('loads once and sends a status for every connected ticket, including terminal statuses, and boards to all screens', async () => {
@@ -93,7 +102,7 @@ describe('broadcast', () => {
     const error = new Error('post failed');
     vi.mocked(loadOffice).mockResolvedValue(snapshot(Array.from({ length: 30 }, (_, i) => ticket(i + 1)), ['screen']));
     vi.mocked(send).mockRejectedValueOnce(error);
-    await expect(broadcast('demo', rules)).resolves.toBeUndefined();
+    await expect(broadcast('demo', rules)).rejects.toBeInstanceOf(AggregateError);
     expect(send).toHaveBeenCalledTimes(31);
     expect(console.error).toHaveBeenCalledWith(expect.any(String), 'phone-1', error);
     expect(removeTicketConnection).not.toHaveBeenCalled();
@@ -106,15 +115,15 @@ describe('broadcast', () => {
     vi.mocked(send).mockResolvedValue('gone');
     if (kind === 'ticket') vi.mocked(removeTicketConnection).mockRejectedValue(error);
     else vi.mocked(deleteScreen).mockRejectedValue(error);
-    await expect(broadcast('demo', rules)).resolves.toBeUndefined();
+    await expect(broadcast('demo', rules)).rejects.toBeInstanceOf(AggregateError);
     expect(send).toHaveBeenCalledTimes(2);
     expect(console.error).toHaveBeenCalledWith(expect.any(String), kind === 'ticket' ? 'phone-1' : 'screen', error);
   });
 
-  it('contains and logs a snapshot read failure', async () => {
+  it('reports and logs a snapshot read failure', async () => {
     const error = new Error('read failed');
     vi.mocked(loadOffice).mockRejectedValue(error);
-    await expect(broadcast('demo', rules)).resolves.toBeUndefined();
+    await expect(broadcast('demo', rules)).rejects.toBe(error);
     expect(console.error).toHaveBeenCalledWith(expect.any(String), 'demo', error);
     expect(send).not.toHaveBeenCalled();
   });
@@ -163,4 +172,50 @@ it('orders overlapping broadcasts by snapshot read time even when the older read
     .toEqual([nowMs + 10, nowMs + 10, nowMs, nowMs]);
   expect(messages.map(message => 'board' in message ? message.board.serverTime : null))
     .toEqual([nowMs, nowMs, nowMs + 20, nowMs + 20]);
+});
+
+describe('requestBroadcast', () => {
+  it('enqueues each request with its office group, timestamp and a unique deduplication ID', async () => {
+    await requestBroadcast('demo');
+    await requestBroadcast('demo');
+    const inputs = sqs.commandCalls(SendMessageCommand).map(call => call.args[0].input);
+    expect(inputs).toHaveLength(2);
+    for (const input of inputs) {
+      expect(input).toEqual({
+        QueueUrl: process.env.BROADCAST_QUEUE_URL,
+        MessageGroupId: 'demo',
+        MessageDeduplicationId: expect.stringMatching(new RegExp(`^demo:${nowMs}:[0-9a-f]{8}$`)),
+        MessageBody: JSON.stringify({ officeId: 'demo', requestedAt: nowMs }),
+      });
+    }
+    expect(inputs[0]?.MessageDeduplicationId).not.toBe(inputs[1]?.MessageDeduplicationId);
+    expect(loadOffice).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('logs a send failure and falls back to a direct broadcast using current rules', async () => {
+    const error = new Error('queue unavailable');
+    sqs.on(SendMessageCommand).rejects(error);
+    vi.mocked(loadOffice).mockResolvedValue(snapshot([], ['screen']));
+    await expect(requestBroadcast('demo')).resolves.toBeUndefined();
+    expect(console.error).toHaveBeenCalledWith(expect.any(String), 'demo', error);
+    expect(loadOffice).toHaveBeenCalledExactlyOnceWith('demo');
+    expect(send).toHaveBeenCalledWith('screen', expect.objectContaining({
+      board: expect.objectContaining({ rules }),
+    }));
+  });
+
+  it('falls back when no queue URL is configured', async () => {
+    vi.stubEnv('BROADCAST_QUEUE_URL', undefined);
+    await requestBroadcast('demo');
+    expect(sqs.calls()).toHaveLength(0);
+    expect(loadOffice).toHaveBeenCalledExactlyOnceWith('demo');
+  });
+
+  it('contains a fallback failure so the completed action still succeeds', async () => {
+    sqs.on(SendMessageCommand).rejects(new Error('queue unavailable'));
+    vi.mocked(loadOffice).mockRejectedValue(new Error('read failed'));
+    await expect(requestBroadcast('demo')).resolves.toBeUndefined();
+    expect(console.error).toHaveBeenCalled();
+  });
 });

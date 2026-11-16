@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: Mola - a virtual queue for walk-in offices. Everything here bills per use; nothing runs while the office is closed.
+Description: Mola - a virtual queue for walk-in offices with per-office FIFO snapshot broadcasts. SQS polling can incur idle requests.
 
 Parameters:
   ConfirmWindowSeconds:
@@ -87,6 +87,26 @@ Resources:
       TimeToLiveSpecification:
         AttributeName: expiresAt
         Enabled: true
+
+  # Refresh signals carry no snapshots; FIFO groups serialize pushes per office.
+  BroadcastDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      FifoQueue: true
+      QueueName: !Sub ${AWS::StackName}-broadcast-dlq.fifo
+      MessageRetentionPeriod: 86400
+      SqsManagedSseEnabled: true
+  BroadcastQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      FifoQueue: true
+      QueueName: !Sub ${AWS::StackName}-broadcast.fifo
+      VisibilityTimeout: 30
+      MessageRetentionPeriod: 3600
+      SqsManagedSseEnabled: true
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt BroadcastDLQ.Arn
+        maxReceiveCount: 3
 
   # ------------------------------------------------------------- websocket ----
   WebSocketApi:
@@ -291,8 +311,14 @@ Resources:
     Properties:
       Handler: client.handler
       LoggingConfig: { LogFormat: JSON, LogGroup: !Ref ClientLogGroup }
+      Environment:
+        Variables:
+          BROADCAST_QUEUE_URL: !Ref BroadcastQueue
       Policies:
         - Statement:
+            - Effect: Allow
+              Action: sqs:SendMessage
+              Resource: !GetAtt BroadcastQueue.Arn
             - Effect: Allow
               Action: [dynamodb:GetItem, dynamodb:Query, dynamodb:PutItem, dynamodb:UpdateItem, dynamodb:DeleteItem]
               Resource: !GetAtt MolaTable.Arn
@@ -330,9 +356,13 @@ Resources:
       LoggingConfig: { LogFormat: JSON, LogGroup: !Ref StaffLogGroup }
       Environment:
         Variables:
+          BROADCAST_QUEUE_URL: !Ref BroadcastQueue
           STAFF_KEY_SHA256: !Ref StaffKeyHash
       Policies:
         - Statement:
+            - Effect: Allow
+              Action: sqs:SendMessage
+              Resource: !GetAtt BroadcastQueue.Arn
             - Effect: Allow
               Action: [dynamodb:GetItem, dynamodb:Query, dynamodb:PutItem, dynamodb:UpdateItem, dynamodb:DeleteItem]
               Resource: !GetAtt MolaTable.Arn
@@ -424,8 +454,14 @@ Resources:
     Properties:
       Handler: notify-called.handler
       LoggingConfig: { LogFormat: JSON, LogGroup: !Ref NotifyCalledLogGroup }
+      Environment:
+        Variables:
+          BROADCAST_QUEUE_URL: !Ref BroadcastQueue
       Policies:
         - Statement:
+            - Effect: Allow
+              Action: sqs:SendMessage
+              Resource: !GetAtt BroadcastQueue.Arn
             - Effect: Allow
               Action: [dynamodb:Query, dynamodb:UpdateItem, dynamodb:DeleteItem]
               Resource: !GetAtt MolaTable.Arn
@@ -459,8 +495,14 @@ Resources:
       Handler: missed-turn.handler
       LoggingConfig: { LogFormat: JSON, LogGroup: !Ref MissedTurnLogGroup }
       Timeout: 30
+      Environment:
+        Variables:
+          BROADCAST_QUEUE_URL: !Ref BroadcastQueue
       Policies:
         - Statement:
+            - Effect: Allow
+              Action: sqs:SendMessage
+              Resource: !GetAtt BroadcastQueue.Arn
             - Effect: Allow
               Action: [dynamodb:Query, dynamodb:UpdateItem, dynamodb:DeleteItem]
               Resource: !GetAtt MolaTable.Arn
@@ -482,6 +524,47 @@ Resources:
         Banner:
           - "js=import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);"
         EntryPoints: [src/handlers/missed-turn.ts]
+
+  BroadcastLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /mola/${AWS::StackName}/broadcaster
+      RetentionInDays: 14
+  BroadcastFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: broadcaster.handler
+      LoggingConfig: { LogFormat: JSON, LogGroup: !Ref BroadcastLogGroup }
+      # Must finish before the queue's visibility timeout; two consumers protect account capacity.
+      Timeout: 20
+      Events:
+        Refresh:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt BroadcastQueue.Arn
+            BatchSize: 10
+            FunctionResponseTypes: [ReportBatchItemFailures]
+            ScalingConfig: { MaximumConcurrency: 2 }
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: [dynamodb:Query, dynamodb:UpdateItem, dynamodb:DeleteItem]
+              Resource: !GetAtt MolaTable.Arn
+            - Effect: Allow
+              Action: execute-api:ManageConnections
+              Resource: !Sub arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${WebSocketApi}/prod/POST/@connections/*
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Format: esm
+        Target: node24
+        Minify: true
+        Sourcemap: true
+        OutExtension: [.js=.mjs]
+        Banner:
+          - "js=import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);"
+        EntryPoints: [src/handlers/broadcaster.ts]
+
 
   # ------------------------------------------------------------ call flow ----
   CalledTicketLogGroup:
