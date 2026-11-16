@@ -14,7 +14,8 @@ capabilities = "CAPABILITY_IAM"
 resolve_s3 = true
 confirm_changeset = false
 parameter_overrides = "ConfirmWindowSeconds=30 DropBackPlaces=3 MaxMisses=2 TicketLifetimeHours=12"
-# StaffKeyHash is passed on the command line once, then reused: --parameter-overrides StaffKeyHash=<sha256>
+# StaffKeyHash goes on the command line. A command-line --parameter-overrides replaces this whole
+# list, so pass the other four parameters with it (README.md, "Deploy it").
 
 [demo.global.parameters]
 stack_name = "mola-demo"
