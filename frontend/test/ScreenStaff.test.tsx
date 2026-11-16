@@ -332,19 +332,71 @@ it('locks the display QR and remembers its unlock key across reconnects', () => 
   open();
   expect(fake.sent.slice(-1)).toEqual([{ action: 'watch', staffKey }]);
 });
-it('refreshes an expired code once even when the same board is repeated', () => {
-  vi.useFakeTimers();
-  try {
-    ready();
-    const join = { code: crypto.randomUUID().replaceAll('-', '').slice(0, 16), expiresAt: Date.now() + 1000 };
-    receive({ type: 'board', board: board(), join });
-    act(() => { vi.advanceTimersByTime(1000); });
-    receive({ type: 'board', board: board(), join });
-    act(() => { vi.advanceTimersByTime(5000); });
-    expect(fake.sent.filter(m => (m as { action: string }).action === 'refreshJoinCode')).toHaveLength(1);
-  } finally {
+describe('join code refresh', () => {
+  beforeEach(() => { vi.useFakeTimers(); });
+  afterEach(() => {
+    cleanup();
     vi.useRealTimers();
-  }
+  });
+
+  const refreshes = () => fake.sent.filter(m => (m as { action: string }).action === 'refreshJoinCode');
+  const showCode = (expiresAt: number) => {
+    const join = { code: crypto.randomUUID().replaceAll('-', '').slice(0, 16), expiresAt };
+    receive({ type: 'board', board: board(), join });
+    return join;
+  };
+
+  it('retries a lost refresh every five seconds even when the same board is repeated', () => {
+    ready();
+    const join = showCode(Date.now() + 1000);
+    act(() => { vi.advanceTimersByTime(1000); });
+    expect(refreshes()).toHaveLength(1);
+    act(() => { vi.advanceTimersByTime(2000); });
+    receive({ type: 'board', board: board(), join });
+    act(() => { vi.advanceTimersByTime(2999); });
+    expect(refreshes()).toHaveLength(1);
+    act(() => { vi.advanceTimersByTime(1); });
+    expect(refreshes()).toHaveLength(2);
+    receive({ type: 'error', code: 'internal', message: 'Refresh failed' });
+    act(() => { vi.advanceTimersByTime(5000); });
+    expect(refreshes()).toHaveLength(3);
+  });
+
+  it.each([false, true])('stops retries when a later expiry arrives (same code: %s)', (sameCode) => {
+    ready();
+    const join = showCode(Date.now());
+    act(() => { vi.advanceTimersByTime(0); });
+    expect(refreshes()).toHaveLength(1);
+    act(() => { vi.advanceTimersByTime(2000); });
+    const next = { code: sameCode ? join.code : crypto.randomUUID().replaceAll('-', '').slice(0, 16), expiresAt: Date.now() + 60_000 };
+    receive({ type: 'board', board: board(), join: next });
+    act(() => { vi.advanceTimersByTime(10_000); });
+    expect(refreshes()).toHaveLength(1);
+  });
+
+  it('sends no refreshes while the code is valid and uses the server clock', () => {
+    ready();
+    const serverTime = Date.now() - 60_000;
+    receive({ type: 'board', board: board({ serverTime }), join: {
+      code: crypto.randomUUID().replaceAll('-', '').slice(0, 16), expiresAt: serverTime + 10_000,
+    } });
+    act(() => { vi.advanceTimersByTime(9999); });
+    expect(refreshes()).toHaveLength(0);
+    act(() => { vi.advanceTimersByTime(1); });
+    expect(refreshes()).toHaveLength(1);
+  });
+
+  it.each(['unmount', 'lock', 'disconnect'])('stops retries on %s', (stop) => {
+    ready();
+    showCode(Date.now());
+    act(() => { vi.advanceTimersByTime(0); });
+    expect(refreshes()).toHaveLength(1);
+    if (stop === 'unmount') cleanup();
+    else if (stop === 'lock') receive({ type: 'error', code: 'forbidden', message: 'Forbidden' });
+    else act(() => fake.opts?.onState('backoff'));
+    act(() => { vi.advanceTimersByTime(10_000); });
+    expect(refreshes()).toHaveLength(1);
+  });
 });
 
 it('asks again when a cached display key is rejected before the first board', () => {

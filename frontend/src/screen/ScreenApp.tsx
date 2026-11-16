@@ -31,7 +31,7 @@ function write(storage: 'local' | 'session', key: string, value: string | null):
 function ScreenBoard({ officeId, staff }: { officeId: string; staff: boolean }) {
   const [view, setView] = useState<{ board: Board; receivedAt: number } | null>(null);
   const [join, setJoin] = useState<{ code: string; expiresAt: number } | null>(null);
-  const refreshedCode = useRef<string | null>(null);
+  const lastRefresh = useRef<{ code: string; expiresAt: number; sentAt: number } | null>(null);
   const keyName = staff ? `mola:staff:${officeId}` : `mola:screen-key:${officeId}`;
   const keyRef = useRef<string | null>(read(staff ? 'session' : 'local', keyName));
   const [desk, setDesk] = useState(() => read('local', `mola:desk:${officeId}`) ?? 'Desk 1');
@@ -130,11 +130,18 @@ function ScreenBoard({ officeId, staff }: { officeId: string; staff: boolean }) 
   const sendRef = useRef(send);
   useEffect(() => { sendRef.current = send; });
   useEffect(() => {
-    if (!join || state !== 'open' || refreshedCode.current === join.code) return;
-    const timer = setTimeout(() => {
-      refreshedCode.current = join.code;
+    if (!join || state !== 'open') return;
+    const previous = lastRefresh.current;
+    const retryDelay = previous?.code === join.code && previous.expiresAt === join.expiresAt
+      ? Math.max(0, previous.sentAt + 5000 - Date.now())
+      : 0;
+    const expiresIn = join.expiresAt - (view?.board.serverTime ?? Date.now()) - (Date.now() - (view?.receivedAt ?? Date.now()));
+    const refresh = () => {
+      lastRefresh.current = { ...join, sentAt: Date.now() };
       sendRef.current({ action: 'refreshJoinCode' });
-    }, Math.max(0, join.expiresAt - (view?.board.serverTime ?? Date.now()) - (Date.now() - (view?.receivedAt ?? Date.now()))));
+      timer = setTimeout(refresh, 5000);
+    };
+    let timer = setTimeout(refresh, Math.max(0, expiresIn, retryDelay));
     return () => clearTimeout(timer);
   }, [join, state, view]);
 
