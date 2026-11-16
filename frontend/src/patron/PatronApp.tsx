@@ -30,6 +30,7 @@ function PatronSession({ officeId }: { officeId: string }) {
   const voice = useVoice('mola:voice');
   const interruptVoice = voice.interrupt;
   const announced = useRef(new Set<string>());
+  const announcing = useRef(new Set<string>());
   const askSheet = useRef<AskSheetHandle>(null);
   const [stored, setStored] = useState<StoredTicket | null>(() => loadTicket(officeId));
   const storedRef = useRef(stored);
@@ -98,9 +99,12 @@ function PatronSession({ officeId }: { officeId: string }) {
           statusRef.current = msg.ticket.status;
           if (msg.ticket.status === 'called' && msg.ticket.deadline !== null && voice.enabled) {
             const key = `${msg.ticket.ticketNo}:${msg.ticket.deadline}`;
-            if (!announced.current.has(key)) {
-              announced.current.add(key);
-              voice.call(msg.ticket.ticketNo, message => sendRef.current?.(message));
+            if (!announced.current.has(key) && !announcing.current.has(key)) {
+              announcing.current.add(key);
+              voice.call(msg.ticket.ticketNo, message => sendRef.current?.(message), () => {
+                announcing.current.delete(key);
+                announced.current.add(key);
+              }, () => announcing.current.delete(key));
             }
           }
           viewRef.current = true;
