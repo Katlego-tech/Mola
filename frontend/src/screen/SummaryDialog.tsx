@@ -14,9 +14,11 @@ function Tile({ label, children, detail }: { label: string; children: ReactNode;
   );
 }
 
-export function SummaryDialog({ officeId, summary, onClose }: {
+export function SummaryDialog({ officeId, summary, failed = false, onRetry, onClose }: {
   officeId: string;
   summary: Extract<ServerMessage, { type: 'summary' }> | null;
+  failed?: boolean;
+  onRetry?(): void;
   onClose(): void;
 }) {
   const stats = summary?.stats;
@@ -50,7 +52,10 @@ export function SummaryDialog({ officeId, summary, onClose }: {
               <h2 className="mb-[0.8vh] text-[1.9vh] text-muted">Summary by Amazon Nova</h2>
               <p className="whitespace-pre-line text-[2.3vh] leading-[1.45]">{summary.text ?? (stats.issued === 0 ? 'No tickets yet today.' : "The written summary isn't available right now. The numbers above are complete.")}</p>
             </div>
-          </> : <p role="status" className="text-[2.2vh] text-muted">Loading summary…</p>}
+          </> : failed ? <div role="alert" className="grid gap-[1vh] text-[2.2vh] text-muted">
+            <p>The day summary isn't available right now. Try again.</p>
+            <Button onClick={onRetry}>Try again</Button>
+          </div> : <p role="status" className="text-[2.2vh] text-muted">Loading summary…</p>}
           <div className="flex justify-end"><Button variant="ticket" onClick={onClose} className="px-[2.4vw] py-[1.8vh] text-[2.6vh]">Close</Button></div>
         </Dialog.Content>
       </Dialog.Portal>

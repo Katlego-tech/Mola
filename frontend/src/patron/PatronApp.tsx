@@ -39,6 +39,7 @@ function PatronSession({ officeId }: { officeId: string }) {
       // A join tapped before a drop never got its answer; let the patron tap again.
       setJoining(false);
       setFailure(null);
+      askSheet.current?.reconnect();
       const own = storedRef.current;
       if (own) sendNow({ action: 'resume', ticketNo: own.ticketNo, secret: own.secret });
     },
@@ -86,6 +87,10 @@ function PatronSession({ officeId }: { officeId: string }) {
       }
     },
   });
+
+  useEffect(() => {
+    if (state !== 'open') askSheet.current?.interrupt();
+  }, [state]);
 
   useEffect(() => {
     sendRef.current = send;
@@ -178,6 +183,7 @@ function PatronSession({ officeId }: { officeId: string }) {
       {stored && <AskSheet
         key={stored.ticketNo}
         ref={askSheet}
+        online={state === 'open'}
         notesVersion={view?.board.notesVersion ?? 0}
         onNotes={(lang) => send({ action: 'notes', lang })}
         onAsk={(question, lang) => {

@@ -223,3 +223,53 @@ it('routes summary replies to the open dialog', () => {
   } });
   expect(screen.getByText('No tickets yet today.')).toBeTruthy();
 });
+
+
+it.each(['error', 'disconnect', 'reconnect'])('retries a summary after %s while loading', (failure) => {
+  const staffKey = crypto.randomUUID();
+  sessionStorage.setItem('mola:staff:demo', staffKey);
+  ready();
+  fireEvent.click(screen.getByRole('button', { name: 'Day summary' }));
+  if (failure === 'error') receive({ type: 'error', code: 'internal', message: 'x' });
+  else if (failure === 'disconnect') act(() => fake.opts?.onState('backoff'));
+  else open();
+  expect(screen.getByText("The day summary isn't available right now. Try again.")).toBeTruthy();
+  expect(screen.queryByText('Loading summary…')).toBeNull();
+  if (failure === 'disconnect') open();
+  fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+  expect(fake.sent.filter((m) => (m as { action: string }).action === 'daySummary')).toEqual([
+    { action: 'daySummary', staffKey }, { action: 'daySummary', staffKey },
+  ]);
+  expect(screen.getByText('Loading summary…')).toBeTruthy();
+  receive({ type: 'summary', text: null, stats: {
+    date: '2026-11-16', issued: 0, seen: 0, left: 0, missed: 0, waitingNow: 0,
+    medianWaitMinutes: null, longestWaitMinutes: null, busiestHour: null, desks: [],
+  } });
+  expect(screen.getByText('No tickets yet today.')).toBeTruthy();
+});
+
+it.each(['error', 'disconnect'])('retries a notes load after %s and keeps editing disabled until notes arrive', (failure) => {
+  ready();
+  fireEvent.click(screen.getByRole('button', { name: 'Office notes' }));
+  if (failure === 'error') receive({ type: 'error', code: 'internal', message: 'x' });
+  else act(() => fake.opts?.onState('backoff'));
+  expect(screen.getByText("Couldn't load the notes. Try again.")).toBeTruthy();
+  expect((screen.getByLabelText('Notes') as HTMLTextAreaElement).disabled).toBe(true);
+  if (failure === 'disconnect') open();
+  fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+  expect(fake.sent.filter((m) => (m as { action: string }).action === 'notes')).toHaveLength(2);
+  expect((screen.getByLabelText('Notes') as HTMLTextAreaElement).disabled).toBe(true);
+  receive({ type: 'notes', lang: 'en', version: 3, text: 'Loaded notes', translated: false });
+  expect((screen.getByLabelText('Notes') as HTMLTextAreaElement).disabled).toBe(false);
+  expect(screen.queryByText("Couldn't load the notes. Try again.")).toBeNull();
+});
+
+
+it('keeps the notes retry available while offline', () => {
+  ready();
+  fireEvent.click(screen.getByRole('button', { name: 'Office notes' }));
+  act(() => fake.opts?.onState('backoff'));
+  fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+  expect(screen.getByText("Couldn't load the notes. Try again.")).toBeTruthy();
+  expect((screen.getByLabelText('Notes') as HTMLTextAreaElement).disabled).toBe(true);
+});

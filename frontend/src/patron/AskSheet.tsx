@@ -12,11 +12,14 @@ type Answer = Extract<ServerMessage, { type: 'answer' }>;
 type Entry = { question: string; reply?: Answer | 'ask_limit' | 'assist_unavailable' };
 export interface AskSheetHandle {
   open(): void;
+  interrupt(): void;
+  reconnect(): void;
   receive(message: ServerMessage): void;
 }
 
-export function AskSheet({ ref, notesVersion, onNotes, onAsk }: {
+export function AskSheet({ ref, online, notesVersion, onNotes, onAsk }: {
   ref: Ref<AskSheetHandle>;
+  online: boolean;
   notesVersion: number;
   onNotes(lang: Lang): void;
   onAsk(question: string, lang: Lang): void;
@@ -36,14 +39,31 @@ export function AskSheet({ ref, notesVersion, onNotes, onAsk }: {
   const opener = useRef<HTMLElement | null>(null);
   const body = useRef<HTMLDivElement>(null);
 
+  const interrupt = () => {
+    requested.current = null;
+    requestedLang.current = null;
+    if (!inFlight.current) return;
+    setEntries((all) => all.map((entry, index) => index === all.length - 1 ? { ...entry, reply: 'assist_unavailable' } : entry));
+    inFlight.current = false;
+    setPending(false);
+  };
+
   useImperativeHandle(ref, () => ({
+    interrupt,
+    reconnect: () => {
+      interrupt();
+      if (!open) return;
+      requested.current = `${lang}:${notesVersion}`;
+      requestedLang.current = lang;
+      onNotes(lang);
+    },
     open: () => {
       opener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
       requested.current = null;
       setOpen(true);
     },
     receive: (message) => {
-      if (message.type === 'notes') {
+      if (message.type === 'notes' && requestedLang.current !== null && (message.lang === requestedLang.current || (requestedLang.current !== 'en' && message.lang === 'en' && !message.translated))) {
         heldLang.current = requestedLang.current;
         setNotes(message);
       }
@@ -54,11 +74,9 @@ export function AskSheet({ ref, notesVersion, onNotes, onAsk }: {
         setPending(false);
       }
       if (message.type === 'error' && inFlight.current) {
-        const code = message.code;
-        if (code === 'ask_limit' || code === 'assist_unavailable') {
-          setEntries((all) => all.map((entry, index) => index === all.length - 1 ? { ...entry, reply: code } : entry));
-          if (code === 'ask_limit') setLimited(true);
-        }
+        const code = message.code === 'ask_limit' ? 'ask_limit' : 'assist_unavailable';
+        setEntries((all) => all.map((entry, index) => index === all.length - 1 ? { ...entry, reply: code } : entry));
+        if (code === 'ask_limit') setLimited(true);
         inFlight.current = false;
         setPending(false);
       }
@@ -66,7 +84,7 @@ export function AskSheet({ ref, notesVersion, onNotes, onAsk }: {
   }));
 
   useEffect(() => {
-    if (!open) return;
+    if (!open || !online) return;
     const key = `${lang}:${notesVersion}`;
     if (requested.current === key) return;
     if (requested.current !== null && notes?.version === notesVersion && heldLang.current === lang) {
@@ -76,7 +94,7 @@ export function AskSheet({ ref, notesVersion, onNotes, onAsk }: {
     requested.current = key;
     requestedLang.current = lang;
     onNotes(lang);
-  }, [open, lang, notesVersion, notes, onNotes]);
+  }, [open, online, lang, notesVersion, notes, onNotes]);
 
   useEffect(() => {
     if (body.current) body.current.scrollTop = body.current.scrollHeight;
@@ -116,7 +134,7 @@ export function AskSheet({ ref, notesVersion, onNotes, onAsk }: {
           <form className="grid gap-2 border-t-[1.5px] border-line pt-3" onSubmit={(e) => {
             e.preventDefault();
             const trimmed = question.trim();
-            if (inFlight.current || limited || !trimmed || trimmed.length > 300) return;
+            if (!online || inFlight.current || limited || !trimmed || trimmed.length > 300) return;
             inFlight.current = true;
             setPending(true);
             setEntries((all) => [...all, { question: trimmed }]);
@@ -126,7 +144,7 @@ export function AskSheet({ ref, notesVersion, onNotes, onAsk }: {
             <label htmlFor="office-question" className="text-[0.875rem] font-bold">{t('yourQuestion')}</label>
             <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
               <input id="office-question" value={question} maxLength={300} disabled={limited || pending} onChange={(e) => setQuestion(e.target.value)} className="min-h-[52px] min-w-0 rounded-[14px] border-2 border-muted bg-surface px-3.5" />
-              <Button type="submit" disabled={pending || limited || !question.trim()} className="min-h-[52px] px-[18px] text-[1.0625rem]">{t(pending ? 'checkingNotes' : 'ask')}</Button>
+              <Button type="submit" disabled={!online || pending || limited || !question.trim()} className="min-h-[52px] px-[18px] text-[1.0625rem]">{t(pending ? 'checkingNotes' : 'ask')}</Button>
             </div>
             <p className="text-[0.875rem] text-muted">{t('askHint')}</p>
             {asksLeft !== null && <p className="text-[0.875rem] text-muted">{t(asksLeft === 1 ? 'asksLeftOne' : 'asksLeftMany', { n: asksLeft })}</p>}
