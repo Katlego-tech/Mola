@@ -16,6 +16,7 @@ function PatronSession({ officeId }: { officeId: string }) {
   const [view, setView] = useState<{ ticket: TicketView; board: Board; receivedAt: number } | null>(null);
   const [joining, setJoining] = useState(false);
   const [tooLate, setTooLate] = useState(false);
+  const [failure, setFailure] = useState<string | null>(null);
   const [lastUpdateAt, setLastUpdateAt] = useState(() => Date.now());
   const lastUpdateRef = useRef(lastUpdateAt);
 
@@ -39,6 +40,7 @@ function PatronSession({ officeId }: { officeId: string }) {
       setLastUpdateAt(at);
       switch (msg.type) {
         case 'ticket':
+          setFailure(null);
           remember({ ticketNo: msg.ticketNo, secret: msg.secret });
           setJoining(false);
           setTooLate(false);
@@ -53,6 +55,7 @@ function PatronSession({ officeId }: { officeId: string }) {
           break;
         case 'error':
           setJoining(false);
+          if (msg.code === 'internal') setFailure(msg.message);
           if (msg.code === 'bad_ticket') {
             remember(null);
             setView(null);
@@ -127,8 +130,10 @@ function PatronSession({ officeId }: { officeId: string }) {
       joining={joining}
       tooLate={tooLate}
       lastUpdateAt={lastUpdateAt}
+      failure={failure}
       onJoin={() => {
         unlockSound();
+        setFailure(null);
         setJoining(true);
         setView(null);
         send({ action: 'join' });
