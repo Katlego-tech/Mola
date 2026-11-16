@@ -53,7 +53,7 @@ flowchart LR
     sfn -- timeout / left / error --> missed[MissedTurn Lambda]
     client -- SendTaskSuccess --> sfn
     notify & missed --> ddb
-    client & staff & notify & missed & assist -- "office changed" --> q[[SQS FIFO: one ordered stream per office]]
+    client & staff & notify & missed -- "office changed" --> q[[SQS FIFO: one ordered stream per office]]
     q --> bcast[Broadcaster Lambda]
     bcast --> ddb
     bcast -- push --> api
@@ -105,7 +105,8 @@ flowchart LR
 - **Languages we tested and didn't ship:** Nova 2 Lite returned Swahili when asked for isiZulu and a
   Sesotho/Swahili mix for Sesotho, so those catalogs are not shipped. Afrikaans is shipped,
   corrected by hand, and still awaits a fluent speaker's review.
-- **Idle cost:** nothing bills by the hour (SQS, Polly and Bedrock bill per request). Idle, the stack pays only for storage (kilobytes of data,
+- **Idle cost:** nothing bills by the hour (SQS, Polly and Bedrock bill per request). Idle, the
+  stack pays only for storage (kilobytes of data,
   logs kept 14 days) and one CloudWatch alarm (about $0.10 a month).
 
 ## Sponsor Technologies Deployed
