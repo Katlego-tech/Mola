@@ -71,9 +71,9 @@ describe('refusals', () => {
     expect(db.getConnection).not.toHaveBeenCalled();
   });
 
-  it('answers a valid action that has no route yet with unknown_action', async () => {
+  it('answers callNext, which belongs to the staff function, with unknown_action', async () => {
     db.getConnection.mockResolvedValue({ connectionId: 'c-9', officeId: 'demo', role: 'patron', expiresAt: 5 });
-    await handler(event('$default', JSON.stringify({ action: 'leave', ticketNo: 42, secret: crypto.randomUUID() })));
+    await handler(event('$default', JSON.stringify({ action: 'callNext', desk: 'Desk 2', staffKey: crypto.randomUUID() })));
     expect(ws.send).toHaveBeenCalledWith('c-9', expect.objectContaining({ type: 'error', code: 'unknown_action' }));
   });
 
