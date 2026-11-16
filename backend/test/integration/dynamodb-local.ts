@@ -9,23 +9,27 @@ const IMAGE = 'amazon/dynamodb-local@sha256:6ada631ec7aa5fc83446855eb17233e3dad1
 
 export default async function setup(project: TestProject) {
   const id = execFileSync('docker', ['run', '-d', '--rm', '-p', '127.0.0.1::8000', IMAGE, '-jar', 'DynamoDBLocal.jar', '-inMemory'], { encoding: 'utf8' }).trim();
-  const port = execFileSync('docker', ['port', id, '8000/tcp'], { encoding: 'utf8' }).trim().split(':').pop();
-  const endpoint = `http://127.0.0.1:${port}`;
+  const stop = () => execFileSync('docker', ['stop', id]);
+  try {
+    const port = execFileSync('docker', ['port', id, '8000/tcp'], { encoding: 'utf8' }).trim().split(':').pop();
+    const endpoint = `http://127.0.0.1:${port}`;
 
-  // Wait until it answers HTTP (any status means the server is up).
-  for (let i = 0; ; i += 1) {
-    try {
-      await fetch(endpoint, { method: 'POST' });
-      break;
-    } catch {
-      if (i === 60) throw new Error('DynamoDB Local did not start within 30 s');
-      await new Promise((r) => setTimeout(r, 500));
+    // Wait until it answers HTTP (any status means the server is up).
+    for (let i = 0; ; i += 1) {
+      try {
+        await fetch(endpoint, { method: 'POST' });
+        break;
+      } catch {
+        if (i === 60) throw new Error('DynamoDB Local did not start within 30 s');
+        await new Promise((r) => setTimeout(r, 500));
+      }
     }
+    project.provide('dynamodbEndpoint', endpoint);
+  } catch (error) {
+    stop(); // never leave the container running when setup fails part way
+    throw error;
   }
-  project.provide('dynamodbEndpoint', endpoint);
-  return () => {
-    execFileSync('docker', ['stop', id]);
-  };
+  return stop;
 }
 
 declare module 'vitest' {

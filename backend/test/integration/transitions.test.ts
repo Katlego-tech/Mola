@@ -31,13 +31,16 @@ beforeAll(async () => {
   db = await import('../../src/lib/db');
 });
 
-/** A fresh ticket in `status`; a called or serving one carries a desk, and a called one its call. */
+/** A fresh ticket in `status`; a called or serving one carries a desk, and a called one its token. */
 async function seed(status: TicketStatus): Promise<number> {
   const ticketNo = next++;
   const ticket: Ticket = {
     officeId: OFFICE, ticketNo, status, queueKey: ticketNo, secretHash: 'a'.repeat(64), misses: 0,
     connectionId: `conn-${ticketNo}`, createdAt: NOW, expiresAt: 4_000_000_000,
-    ...(status === 'called' ? { desk: 'Desk 1', calledAt: CALLED_AT, taskToken: 'tok-0', deadline: 1 } : {}),
+    // Every seed carries the call's identity, so a refusal of a call-guarded write from another
+    // status can only come from its status clause, never from a missing calledAt.
+    calledAt: CALLED_AT,
+    ...(status === 'called' ? { desk: 'Desk 1', taskToken: 'tok-0', deadline: 1 } : {}),
     ...(status === 'serving' ? { desk: 'Desk 1' } : {}),
   };
   await db.putTicket(ticket);
@@ -86,6 +89,7 @@ describe.each(TRANSITIONS)('$write', (t) => {
     const after = await read(n);
     expect(after.status).toBe(t.to);
     for (const field of t.removes ?? []) expect(after[field]).toBeUndefined();
+    if (t.write === 'storeTaskToken') expect(after.taskToken).toBe('tok-1');
   });
 
   it.each(STATUSES.filter((s) => s !== t.from))(`is refused from %s, and changes nothing`, async (status) => {
