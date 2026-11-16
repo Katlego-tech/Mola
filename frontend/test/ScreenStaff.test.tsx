@@ -458,7 +458,7 @@ describe('screen speech', () => {
     ready();
     fireEvent.click(screen.getByRole('button', { name: 'Voice off' }));
     receive({ type: 'board', board: board({ snapshotAt: 2000 }) });
-    const calls = [{ ticketNo: 7, desk: 'Desk 1', deadline: null }];
+    const calls = [{ ticketNo: 7, desk: 'Desk 1', deadline: Date.now() + 120000 }];
     receive({ type: 'board', board: board({ snapshotAt: 1000, calling: calls }) });
     expect(fake.sent.filter(m => (m as { action: string }).action === 'speak')).toHaveLength(0);
     fireEvent.click(screen.getByRole('button', { name: 'Unlock' }));
@@ -475,14 +475,14 @@ describe('screen speech', () => {
   it('defaults off and sends nothing for a call', () => {
     ready();
     expect(screen.getByRole('button', { name: 'Voice off' }).getAttribute('aria-pressed')).toBe('false');
-    receive({ type: 'board', board: board({ calling: [{ ticketNo: 7, desk: 'Desk 1', deadline: null }] }) });
+    receive({ type: 'board', board: board({ calling: [{ ticketNo: 7, desk: 'Desk 1', deadline: Date.now() + 120000 }] }) });
     expect(fake.sent).not.toContainEqual({ action: 'speak', what: 'call', ticketNo: 7 });
   });
   it('persists the toggle and announces calls once, in order across reconnects', () => {
     ready();
     fireEvent.click(screen.getByRole('button', { name: 'Voice off' }));
     expect(localStorage.getItem('mola:voice:screen')).toBe('true');
-    const calls = board({ calling: [{ ticketNo: 7, desk: 'Desk 1', deadline: null }, { ticketNo: 8, desk: 'Desk 2', deadline: null }] });
+    const calls = board({ calling: [{ ticketNo: 7, desk: 'Desk 1', deadline: Date.now() + 120000 }, { ticketNo: 8, desk: 'Desk 2', deadline: Date.now() + 120000 }] });
     receive({ type: 'board', board: calls });
     expect(fake.sent.filter((m) => (m as { action: string }).action === 'speak')).toEqual([{ action: 'speak', what: 'call', ticketNo: 7 }]);
     receive({ type: 'speech', what: 'call', ticketNo: 7, url: '/voice/first.mp3' });
@@ -492,11 +492,82 @@ describe('screen speech', () => {
     receive({ type: 'board', board: calls });
     expect(fake.sent.filter((m) => (m as { action: string }).action === 'speak')).toHaveLength(2);
   });
+  const speaks = () => fake.sent.filter(m => (m as { action: string }).action === 'speak');
+  const enable = () => {
+    ready();
+    fireEvent.click(screen.getByRole('button', { name: 'Voice off' }));
+  };
+  it('waits for a deadline and announces a recall to the same desk once', () => {
+    enable();
+    const call = { ticketNo: 7, desk: 'Desk 1', deadline: null as number | null };
+    receive({ type: 'board', board: board({ calling: [call] }) });
+    expect(speaks()).toHaveLength(0);
+    call.deadline = Date.now() + 120000;
+    receive({ type: 'board', board: board({ calling: [call] }) });
+    receive({ type: 'board', board: board({ calling: [call] }) });
+    expect(speaks()).toHaveLength(1);
+    receive({ type: 'speech', what: 'call', ticketNo: 7, url: '/voice/first.mp3' });
+    receive({ type: 'board', board: board({ calling: [call] }) });
+    expect(speaks()).toHaveLength(1);
+    call.deadline += 120000;
+    receive({ type: 'board', board: board({ calling: [call] }) });
+    receive({ type: 'speech', what: 'call', ticketNo: 7, url: '/voice/second.mp3' });
+    receive({ type: 'board', board: board({ calling: [call] }) });
+    expect(speaks()).toHaveLength(2);
+  });
+  it('forgets announcements after calls leave the board, even with voice off', () => {
+    enable();
+    const calls = board({ calling: [{ ticketNo: 7, desk: 'Desk 1', deadline: Date.now() + 120000 }] });
+    receive({ type: 'board', board: calls });
+    receive({ type: 'speech', what: 'call', ticketNo: 7, url: '/voice/first.mp3' });
+    fireEvent.click(screen.getByRole('button', { name: 'Voice on' }));
+    receive({ type: 'board', board: board() });
+    fireEvent.click(screen.getByRole('button', { name: 'Voice off' }));
+    receive({ type: 'board', board: calls });
+    expect(speaks()).toHaveLength(2);
+  });
+  it.each(['open', 'disconnect', 'failure'] as const)('retries unanswered calls after %s and never repeats a queued announcement', reason => {
+    enable();
+    const calls = board({ calling: [
+      { ticketNo: 7, desk: 'Desk 1', deadline: Date.now() + 120000 },
+      { ticketNo: 8, desk: 'Desk 2', deadline: Date.now() + 120000 },
+    ] });
+    receive({ type: 'board', board: calls });
+    receive({ type: 'board', board: calls });
+    expect(speaks()).toHaveLength(1);
+    if (reason === 'open') open();
+    else if (reason === 'disconnect') {
+      act(() => fake.opts?.onState('reconnecting'));
+      open();
+    } else {
+      receive({ type: 'error', code: 'voice_unavailable', message: 'Unavailable' });
+      receive({ type: 'error', code: 'voice_unavailable', message: 'Unavailable' });
+    }
+    const before = speaks().length;
+    receive({ type: 'board', board: calls });
+    receive({ type: 'board', board: calls });
+    expect(speaks()).toHaveLength(before + 1);
+    receive({ type: 'speech', what: 'call', ticketNo: 7, url: '/voice/first.mp3' });
+    receive({ type: 'speech', what: 'call', ticketNo: 8, url: '/voice/second.mp3' });
+    const queued = speaks().length;
+    open();
+    receive({ type: 'board', board: calls });
+    expect(speaks()).toHaveLength(queued);
+  });
+  it.each(['bad_ticket', 'internal'] as const)('lets a %s error reach staff controls while speech is pending', code => {
+    sessionStorage.setItem('mola:staff:demo', crypto.randomUUID());
+    enable();
+    receive({ type: 'board', board: board({ calling: [{ ticketNo: 7, desk: 'Desk 2', deadline: Date.now() + 120000 }] }) });
+    fireEvent.click(screen.getByRole('button', { name: 'Call next' }));
+    receive({ type: 'error', code, message: 'Please try again.' });
+    expect((screen.getByRole('button', { name: 'Call next' }) as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.getByText('Please try again.')).toBeTruthy();
+  });
   it('shows an off toggle and a hint when remembered voice cannot play', async () => {
     localStorage.setItem('mola:voice:screen', 'true');
     vi.mocked(HTMLMediaElement.prototype.play).mockRejectedValue(new Error('gesture needed'));
     ready();
-    receive({ type: 'board', board: board({ calling: [{ ticketNo: 7, desk: 'Desk 1', deadline: null }] }) });
+    receive({ type: 'board', board: board({ calling: [{ ticketNo: 7, desk: 'Desk 1', deadline: Date.now() + 120000 }] }) });
     await act(async () => receive({ type: 'speech', what: 'call', ticketNo: 7, url: '/voice/first.mp3' }));
     expect(screen.getByRole('button', { name: 'Voice off' }).getAttribute('aria-pressed')).toBe('false');
     expect(screen.getByText('Tap to turn voice on')).toBeTruthy();

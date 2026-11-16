@@ -209,6 +209,16 @@ describe('speech', () => {
     expect(polly.commandCalls(SynthesizeSpeechCommand)[0]?.args[0].input).toEqual({ Text: 'Ticket 42, please go to Desk 2.', VoiceId: 'Ayanda', Engine: 'neural', OutputFormat: 'mp3', SampleRate: '22050' });
     expect(s3.commandCalls(PutObjectCommand)[0]?.args[0].input).toMatchObject({ Bucket: 'voice-tests', ContentType: 'audio/mpeg', CacheControl: 'public, max-age=86400, immutable' });
   });
+  it.each([
+    { name: 'AccessDenied' },
+    { name: 'Forbidden', $metadata: { httpStatusCode: 403 } },
+  ])('synthesises when the cache check is denied with %j', async details => {
+    s3.on(HeadObjectCommand).rejects(Object.assign(new Error('denied'), details));
+    expect(await run(call())).toMatchObject({ type: 'speech' });
+    expect(polly.commandCalls(SynthesizeSpeechCommand)).toHaveLength(1);
+    expect(s3.commandCalls(PutObjectCommand)).toHaveLength(1);
+    expect(JSON.parse(vi.mocked(console.log).mock.calls[0]?.[0] as string)).toMatchObject({ cached: false, outcome: 'ok' });
+  });
   it('skips Polly and writes on a cache hit', async () => {
     expect(await run(call())).toMatchObject({ type: 'speech' });
     expect(polly.calls()).toHaveLength(0); expect(s3.commandCalls(PutObjectCommand)).toHaveLength(0);
