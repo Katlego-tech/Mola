@@ -4,6 +4,7 @@ import { buzz, chime, holdWakeLock, unlockSound } from '@/lib/alerts';
 import type { Board, TicketView } from '@/lib/messages';
 import { forgetTicket, loadTicket, saveTicket, type StoredTicket } from '@/lib/storedTicket';
 import { OFFICE_ID, useOfficeSocket } from '@/lib/useOfficeSocket';
+import { AskSheet, type AskSheetHandle } from './AskSheet';
 import { PatronView } from './PatronView';
 
 const CLOSED = new Set(['done', 'left', 'no_show']);
@@ -13,6 +14,7 @@ const STALE_MS = 60_000;
 
 function PatronSession({ officeId }: { officeId: string }) {
   const { t } = useT();
+  const askSheet = useRef<AskSheetHandle>(null);
   const [stored, setStored] = useState<StoredTicket | null>(() => loadTicket(officeId));
   const storedRef = useRef(stored);
   const [view, setView] = useState<{ ticket: TicketView; board: Board; receivedAt: number } | null>(null);
@@ -44,6 +46,7 @@ function PatronSession({ officeId }: { officeId: string }) {
       const at = Date.now();
       lastUpdateRef.current = at;
       setLastUpdateAt(at);
+      askSheet.current?.receive(msg);
       switch (msg.type) {
         case 'ticket':
           setFailure(null);
@@ -78,6 +81,7 @@ function PatronSession({ officeId }: { officeId: string }) {
           }
           break;
         case 'board':
+          setView((current) => current ? { ...current, board: msg.board, receivedAt: at } : current);
           break;
       }
     },
@@ -140,35 +144,48 @@ function PatronSession({ officeId }: { officeId: string }) {
   }, [reconnect]);
 
   return (
-    <PatronView
-      officeId={officeId}
-      ticket={view?.ticket ?? null}
-      board={view?.board ?? null}
-      receivedAt={view?.receivedAt ?? 0}
-      online={state === 'open'}
-      resuming={stored !== null && view === null}
-      joining={joining}
-      tooLate={tooLate}
-      lastUpdateAt={lastUpdateAt}
-      failure={failure ? t('internalError') : null}
-      onJoin={() => {
-        unlockSound();
-        setFailure(null);
-        setJoining(true);
-        viewRef.current = false;
-        setView(null);
-        send({ action: 'join' });
-      }}
-      onConfirm={() => {
-        unlockSound();
-        const own = storedRef.current;
-        if (own) send({ action: 'confirm', ticketNo: own.ticketNo, secret: own.secret });
-      }}
-      onLeave={() => {
-        const own = storedRef.current;
-        if (own) send({ action: 'leave', ticketNo: own.ticketNo, secret: own.secret });
-      }}
-    />
+    <>
+      <PatronView
+        onAsk={() => askSheet.current?.open()}
+        officeId={officeId}
+        ticket={view?.ticket ?? null}
+        board={view?.board ?? null}
+        receivedAt={view?.receivedAt ?? 0}
+        online={state === 'open'}
+        resuming={stored !== null && view === null}
+        joining={joining}
+        tooLate={tooLate}
+        lastUpdateAt={lastUpdateAt}
+        failure={failure ? t('internalError') : null}
+        onJoin={() => {
+          unlockSound();
+          setFailure(null);
+          setJoining(true);
+          viewRef.current = false;
+          setView(null);
+          send({ action: 'join' });
+        }}
+        onConfirm={() => {
+          unlockSound();
+          const own = storedRef.current;
+          if (own) send({ action: 'confirm', ticketNo: own.ticketNo, secret: own.secret });
+        }}
+        onLeave={() => {
+          const own = storedRef.current;
+          if (own) send({ action: 'leave', ticketNo: own.ticketNo, secret: own.secret });
+        }}
+      />
+      {stored && <AskSheet
+        key={stored.ticketNo}
+        ref={askSheet}
+        notesVersion={view?.board.notesVersion ?? 0}
+        onNotes={(lang) => send({ action: 'notes', lang })}
+        onAsk={(question, lang) => {
+          const own = storedRef.current;
+          if (own) send({ action: 'ask', ticketNo: own.ticketNo, secret: own.secret, question, lang });
+        }}
+      />}
+    </>
   );
 }
 

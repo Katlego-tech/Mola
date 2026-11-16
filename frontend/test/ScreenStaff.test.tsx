@@ -147,3 +147,79 @@ describe('staff controls', () => {
     expect(fake.sent).toContainEqual({ action: 'callNext', desk: 'Desk 1', staffKey: key });
   });
 });
+
+describe('staff notes and summary', () => {
+  it('loads notes, saves with their version and logs success', () => {
+    sessionStorage.setItem('mola:staff:demo', crypto.randomUUID());
+    ready();
+    fireEvent.click(screen.getByRole('button', { name: 'Office notes' }));
+    expect(fake.sent).toContainEqual({ action: 'notes', lang: 'en' });
+    receive({ type: 'notes', lang: 'en', version: 3, text: 'Bring ID.', translated: false });
+    expect((screen.getByLabelText('Notes') as HTMLTextAreaElement).value).toBe('Bring ID.');
+    fireEvent.change(screen.getByLabelText('Notes'), { target: { value: 'Bring copies.' } });
+    expect(screen.getByText('13 of 4000')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Save notes' }));
+    expect(fake.sent).toContainEqual({ action: 'saveNotes', text: 'Bring copies.', baseVersion: 3, staffKey: sessionStorage.getItem('mola:staff:demo') });
+    receive({ type: 'notes', lang: 'en', version: 4, text: 'Bring copies.', translated: false });
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.getByText('Notes saved.')).toBeTruthy();
+  });
+
+  it('keeps typed text on conflict and reloads the version before saving again', () => {
+    sessionStorage.setItem('mola:staff:demo', crypto.randomUUID());
+    ready();
+    fireEvent.click(screen.getByRole('button', { name: 'Office notes' }));
+    receive({ type: 'notes', lang: 'en', version: 3, text: 'Old', translated: false });
+    fireEvent.change(screen.getByLabelText('Notes'), { target: { value: 'My text' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save notes' }));
+    receive({ type: 'error', code: 'notes_conflict', message: 'x' });
+    expect(screen.getByText('Someone else changed the notes. Your text is kept. Check theirs, then save again.')).toBeTruthy();
+    expect(fake.sent.filter((m) => (m as { action: string }).action === 'notes')).toHaveLength(2);
+    receive({ type: 'notes', lang: 'en', version: 5, text: 'Their text', translated: false });
+    expect((screen.getByLabelText('Notes') as HTMLTextAreaElement).value).toBe('My text');
+    fireEvent.click(screen.getByRole('button', { name: 'Save notes' }));
+    expect(fake.sent).toContainEqual({ action: 'saveNotes', text: 'My text', baseVersion: 5, staffKey: sessionStorage.getItem('mola:staff:demo') });
+  });
+
+  it('unlocks for a summary and re-locks on forbidden', () => {
+    ready();
+    fireEvent.click(screen.getByRole('button', { name: 'Day summary' }));
+    const staffKey = crypto.randomUUID();
+    fireEvent.change(screen.getByLabelText('Staff key'), { target: { value: staffKey } });
+    fireEvent.click(screen.getByRole('button', { name: 'Unlock' }));
+    expect(fake.sent).toContainEqual({ action: 'daySummary', staffKey });
+    receive({ type: 'error', code: 'forbidden', message: 'x' });
+    expect(sessionStorage.getItem('mola:staff:demo')).toBeNull();
+    expect(screen.getByText("That key didn't work. Check it and try again.")).toBeTruthy();
+  });
+});
+
+it('retries a notes save after re-locking without losing the draft', () => {
+  sessionStorage.setItem('mola:staff:demo', crypto.randomUUID());
+  ready();
+  fireEvent.click(screen.getByRole('button', { name: 'Office notes' }));
+  receive({ type: 'notes', lang: 'en', version: 1, text: 'Original', translated: false });
+  fireEvent.change(screen.getByLabelText('Notes'), { target: { value: 'Updated draft' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save notes' }));
+  receive({ type: 'error', code: 'forbidden', message: 'x' });
+  const staffKey = crypto.randomUUID();
+  fireEvent.change(screen.getByLabelText('Staff key'), { target: { value: staffKey } });
+  fireEvent.click(screen.getByRole('button', { name: 'Unlock' }));
+  expect(fake.sent).toContainEqual({ action: 'saveNotes', text: 'Updated draft', baseVersion: 1, staffKey });
+  receive({ type: 'notes', lang: 'en', version: 2, text: 'Updated draft', translated: false });
+  expect(screen.queryByRole('dialog')).toBeNull();
+  expect(screen.getByText('Notes saved.')).toBeTruthy();
+});
+
+it('routes summary replies to the open dialog', () => {
+  const staffKey = crypto.randomUUID();
+  sessionStorage.setItem('mola:staff:demo', staffKey);
+  ready();
+  fireEvent.click(screen.getByRole('button', { name: 'Day summary' }));
+  expect(fake.sent).toContainEqual({ action: 'daySummary', staffKey });
+  receive({ type: 'summary', text: null, stats: {
+    date: '2026-11-16', issued: 0, seen: 0, left: 0, missed: 0, waitingNow: 0,
+    medianWaitMinutes: null, longestWaitMinutes: null, busiestHour: null, desks: [],
+  } });
+  expect(screen.getByText('No tickets yet today.')).toBeTruthy();
+});

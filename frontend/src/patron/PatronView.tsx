@@ -29,6 +29,7 @@ export interface PatronViewProps {
   lastUpdateAt: number;
   /** The last request failed on the server side; shown next to the button that can retry it. */
   failure?: string | null;
+  onAsk?(): void;
   onJoin(): void;
   onConfirm(): void;
   onLeave(): void;
@@ -123,6 +124,7 @@ export function PatronView(props: PatronViewProps) {
   const { t } = useT();
   const { ticket, board, officeId } = props;
   const now = useNow(1000);
+  const askButton = <Button onClick={props.onAsk} className="min-h-[52px] border-[1.5px] border-line bg-surface text-[1.0625rem] text-text">{t('askOffice')}</Button>;
 
   if (!ticket || !board) {
     if (props.resuming) {
@@ -153,7 +155,7 @@ export function PatronView(props: PatronViewProps) {
 
   if (ticket.status === 'serving') {
     return (
-      <Page officeId={officeId}>
+      <Page officeId={officeId} footer={<>{askButton}<LeaveDialog onLeave={props.onLeave} /></>}>
         {reconnect}
         <TicketStub ticketNo={ticket.ticketNo}>
           <StubLine title={t('confirmed', { desk: ticket.desk ?? '' })} detail={t('showNumber')} />
@@ -183,7 +185,7 @@ export function PatronView(props: PatronViewProps) {
 
   // waiting
   return (
-    <Page officeId={officeId} footer={<LeaveDialog onLeave={props.onLeave} />}>
+    <Page officeId={officeId} footer={<>{askButton}<LeaveDialog onLeave={props.onLeave} /></>}>
       {reconnect}
       {props.tooLate && <TooLateNotice />}
       {ticket.misses > 0 && <MissedNotice misses={ticket.misses} rules={board.rules} />}
