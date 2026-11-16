@@ -146,6 +146,12 @@ Resources:
       ApiId: !Ref WebSocketApi
       RouteKey: confirm
       Target: !Sub integrations/${ClientIntegration}
+  LeaveRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref WebSocketApi
+      RouteKey: leave
+      Target: !Sub integrations/${ClientIntegration}
   CallNextRoute:
     Type: AWS::ApiGatewayV2::Route
     Properties:
@@ -161,7 +167,7 @@ Resources:
 
   ProdStage:
     Type: AWS::ApiGatewayV2::Stage
-    DependsOn: [ConnectRoute, DisconnectRoute, WatchRoute, PingRoute, JoinRoute, ResumeRoute, ConfirmRoute, CallNextRoute, DefaultRoute]
+    DependsOn: [ConnectRoute, DisconnectRoute, WatchRoute, PingRoute, JoinRoute, ResumeRoute, ConfirmRoute, LeaveRoute, CallNextRoute, DefaultRoute]
     Properties:
       ApiId: !Ref WebSocketApi
       StageName: prod
