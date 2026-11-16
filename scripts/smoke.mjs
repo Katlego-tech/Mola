@@ -1,15 +1,18 @@
 #!/usr/bin/env node
-// Drives a deployed Mola stack end to end over its WebSocket, the way the demo does.
+// Drives a deployed Mola stack end to end over its WebSocket, as a screen and patrons do.
 //
 //   node scripts/smoke.mjs --url wss://<api>.execute-api.<region>.amazonaws.com/prod
-//        [--office smoke-<time>] [--staff-key KEY] [--desk "Desk 1"] [--timeout]
+//        [--office smoke-<time>] [--staff-key KEY] [--desk "Desk 1"] [--timeout] [--assist]
 //
 // Without --staff-key: a screen watches, two patrons join (positions 1 and 2), one drops its
 // connection and resumes the same ticket. With --staff-key: the desk calls the first patron,
 // who confirms (serving); then calls the second. With --timeout as well: the second patron does
 // not confirm, and the script waits out the confirm window for the drop-back. Finally the second
 // patron leaves. Exits non-zero at the first step that does not happen.
-// Uses Node's built-in WebSocket (Node 22+).
+// With --assist and --staff-key: also checks saved notes, answers, translation, and daily stats.
+// Uses Node's built-in WebSocket (Node 24).
+
+import { readFile } from 'node:fs/promises';
 
 const args = Object.fromEntries(
   process.argv.slice(2).reduce((pairs, arg, i, all) => {
@@ -17,8 +20,8 @@ const args = Object.fromEntries(
     return pairs;
   }, []),
 );
-if (!args.url) {
-  console.error('usage: node scripts/smoke.mjs --url wss://... [--office id] [--staff-key KEY] [--desk "Desk 1"] [--timeout]');
+if (!args.url || (args.assist && typeof args['staff-key'] !== 'string')) {
+  console.error('usage: node scripts/smoke.mjs --url wss://... [--office id] [--staff-key KEY] [--desk "Desk 1"] [--timeout] [--assist]');
   process.exit(2);
 }
 const office = args.office ?? `smoke-${Date.now().toString(36)}`;
@@ -129,6 +132,64 @@ if (args['staff-key']) {
   await b.next(statusOf(tb.ticketNo, 'left'), 'patron B left');
   ok('patron B leaves the queue');
   staff.close();
+}
+
+if (args.assist) {
+  const fixture = JSON.parse(await readFile(new URL('./fixtures/eval-clinic.json', import.meta.url), 'utf8'));
+  async function assistRequest(c, msg, match, label) {
+    c.send(msg);
+    const reply = await c.next((m) => m.type === 'error' || match(m), label, 60_000);
+    if (reply.type === 'error') throw new Error(`${label}: ${reply.code}`);
+    return reply;
+  }
+  let ticket;
+  let failed = false;
+  try {
+    const notes = await assistRequest(screen, { action: 'notes', lang: 'en' }, (m) => m.type === 'notes', 'current notes');
+    const saved = await assistRequest(screen, { action: 'saveNotes', text: fixture.notes, baseVersion: notes.version, staffKey: args['staff-key'] }, (m) => m.type === 'notes', 'saved notes');
+    if (saved.text !== fixture.notes || saved.version !== notes.version + 1) throw new Error('saved notes did not match');
+    ok('staff saves clinic notes');
+
+    const read = await assistRequest(screen, { action: 'notes', lang: 'en' }, (m) => m.type === 'notes', 'notes read back');
+    if (read.text !== fixture.notes || read.version !== saved.version) throw new Error('notes read back did not match');
+    ok('saved notes read back with the same text and version');
+
+    ticket = await assistRequest(b, { action: 'join' }, (m) => m.type === 'ticket', 'assist ticket');
+    const credentials = { ticketNo: ticket.ticketNo, secret: ticket.secret };
+    const answerable = fixture.cases.find((item) => item.kind === 'answerable');
+    const answer = await assistRequest(b, { action: 'ask', ...credentials, question: answerable.question, lang: answerable.lang }, (m) => m.type === 'answer' && m.question === answerable.question, 'answerable question');
+    if (answer.found !== true) throw new Error('answerable question was not answered');
+    ok('assist answers a question covered by the notes');
+
+    const unanswerable = fixture.cases.find((item) => item.kind === 'unanswerable');
+    const refusal = await assistRequest(b, { action: 'ask', ...credentials, question: unanswerable.question, lang: unanswerable.lang }, (m) => m.type === 'answer' && m.question === unanswerable.question, 'unanswerable question');
+    if (refusal.found !== false) throw new Error('unanswerable question was answered');
+    ok('assist declines a question outside the notes');
+
+    const translated = await assistRequest(screen, { action: 'notes', lang: 'af' }, (m) => m.type === 'notes', 'Afrikaans notes');
+    if (translated.translated !== true) throw new Error('Afrikaans notes were not translated');
+    ok('notes are translated into Afrikaans');
+
+    const summary = await assistRequest(screen, { action: 'daySummary', staffKey: args['staff-key'] }, (m) => m.type === 'summary', 'day summary');
+    if (!summary.stats || typeof summary.stats !== 'object') throw new Error('day summary has no stats');
+    ok('day summary includes computed stats');
+  } catch (error) {
+    console.error(`  FAILED  ${error.message}`);
+    failed = true;
+  } finally {
+    if (ticket) {
+      try {
+        await assistRequest(b, { action: 'leave', ticketNo: ticket.ticketNo, secret: ticket.secret }, statusOf(ticket.ticketNo, 'left'), 'assist ticket left');
+      } catch (error) {
+        console.error(`  FAILED  ${error.message}`);
+        failed = true;
+      }
+    }
+  }
+  if (failed) {
+    for (const c of [screen, a2, b]) c.close();
+    process.exit(1);
+  }
 }
 
 for (const c of [screen, a2, b]) c.close();
