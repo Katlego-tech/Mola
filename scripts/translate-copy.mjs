@@ -23,7 +23,11 @@ async function main() {
     model: { type: 'string', default: 'global.amazon.nova-2-lite-v1:0' },
     only: { type: 'string' },
   } });
-  const languages = { zu: 'isiZulu', af: 'Afrikaans', st: 'Sesotho' };
+  const languages = {
+    zu: 'isiZulu (the Zulu language of South Africa, ISO 639-1 "zu"; not Swahili or Xhosa)',
+    af: 'Afrikaans (South Africa)',
+    st: 'Sesotho (Southern Sotho of South Africa and Lesotho, ISO 639-1 "st"; not Setswana or Sepedi)',
+  };
   if (values.only && !Object.hasOwn(languages, values.only)) throw new Error('--only must be zu, af or st');
   const require = createRequire(new URL('../backend/package.json', import.meta.url));
   const { BedrockRuntimeClient, ConverseCommand } = require('@aws-sdk/client-bedrock-runtime');
@@ -33,14 +37,25 @@ async function main() {
     for (const [lang, name] of Object.entries(languages)) {
       if (values.only && values.only !== lang) continue;
       try {
+        // A forced tool call returns structured input, which survives quotes and escapes that break
+        // a free-text JSON reply.
+        const keys = Object.keys(source);
         const response = await client.send(new ConverseCommand({
           modelId: values.model,
-          system: [{ text: `Translate each value of this JSON object into ${name}. Keep the keys. Keep every \`{placeholder}\` exactly. These are short labels on a phone screen for people waiting in a government office; use plain, polite, everyday words. Return only JSON.` }],
+          system: [{ text: `Translate each value of the user's JSON object into ${name} and call \`catalog\` with the result. Keep the keys. Keep every \`{placeholder}\` exactly. These are short labels on a phone screen for people waiting in a government office; use plain, polite, everyday words.` }],
           messages: [{ role: 'user', content: [{ text: JSON.stringify(source) }] }],
-          inferenceConfig: { maxTokens: 4000, temperature: 0 },
+          inferenceConfig: { maxTokens: 6000, temperature: 0 },
+          toolConfig: {
+            tools: [{ toolSpec: { name: 'catalog', description: `The patron page copy in ${name}.`, inputSchema: { json: {
+              type: 'object', properties: Object.fromEntries(keys.map((key) => [key, { type: 'string' }])), required: keys, additionalProperties: false,
+            } } } }],
+            toolChoice: { tool: { name: 'catalog' } },
+          },
         }));
-        const text = (response.output?.message?.content ?? []).map((block) => block.text ?? '').join('');
-        const translated = JSON.parse(text.trim().replace(/^```(?:json)?\s*|\s*```$/g, ''));
+        const translated = response.output?.message?.content?.find((block) => block.toolUse?.name === 'catalog')?.toolUse?.input;
+        if (!translated || typeof translated !== 'object') throw new Error(`No catalog returned (stop reason ${response.stopReason})`);
+        const broken = keys.filter((key) => !checkCatalog({ [key]: source[key] }, { [key]: translated[key] }));
+        if (broken.length) throw new Error(`Translation changed keys, placeholders or numbers: ${broken.join(', ')}`);
         if (!checkCatalog(source, translated)) throw new Error('Translation changed keys, placeholders or numbers');
         await writeFile(new URL(`../frontend/src/i18n/${lang}.json`, import.meta.url), `${JSON.stringify({
           ...translated,
