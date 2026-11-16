@@ -38,12 +38,14 @@ export function SummaryDialog({ officeId, summary, onClose }: {
               <Tile label="Still waiting">{stats.waitingNow}</Tile>
               {stats.medianWaitMinutes !== null && <Tile label="Median wait">{stats.medianWaitMinutes}<small className="ml-[0.3vw] text-[2.2vh]"> min</small></Tile>}
               {stats.longestWaitMinutes !== null && <Tile label="Longest wait">{stats.longestWaitMinutes}<small className="ml-[0.3vw] text-[2.2vh]"> min</small></Tile>}
-              {stats.busiestHour !== null && <Tile label="Busiest hour" detail={`to ${hour(stats.busiestHour.hour + 1)}`}>{hour(stats.busiestHour.hour)}</Tile>}
+              {stats.busiestHour !== null && <Tile label="Busiest hour" detail={`to ${hour((stats.busiestHour.hour + 1) % 24)}`}>{hour(stats.busiestHour.hour)}</Tile>}
             </div>
-            <div className="flex flex-wrap items-baseline gap-[2vw] text-[2.2vh]">
-              <b className="text-[1.9vh] text-muted">Seen per desk</b>
-              {stats.desks.map(({ desk, seen }) => <span key={desk}>{desk} <span className="font-mono font-bold">{seen}</span></span>)}
-            </div>
+            {stats.desks.length > 0 && (
+              <div className="flex flex-wrap items-baseline gap-[2vw] text-[2.2vh]">
+                <b className="text-[1.9vh] text-muted">Seen per desk</b>
+                {stats.desks.map(({ desk, seen }) => <span key={desk}>{desk} <span className="font-mono font-bold">{seen}</span></span>)}
+              </div>
+            )}
             <div className="border-l-[0.5vh] border-ticket-deep py-[0.4vh] pl-[1.2vw]">
               <h2 className="mb-[0.8vh] text-[1.9vh] text-muted">Summary by Amazon Nova</h2>
               <p className="whitespace-pre-line text-[2.3vh] leading-[1.45]">{summary.text ?? (stats.issued === 0 ? 'No tickets yet today.' : "The written summary isn't available right now. The numbers above are complete.")}</p>
