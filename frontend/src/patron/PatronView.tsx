@@ -24,6 +24,8 @@ export interface PatronViewProps {
   resuming: boolean;
   /** "Get a number" was tapped and the ticket has not arrived yet. */
   joining: boolean;
+  canJoin?: boolean;
+  staleCode?: boolean;
   confirming?: boolean;
   /** The server said the confirm came after the window closed. */
   tooLate: boolean;
@@ -125,6 +127,7 @@ export function PatronView(props: PatronViewProps) {
   const { t } = useT();
   const { ticket, board, officeId } = props;
   const now = useNow(1000);
+  const scanHint = <p className="max-w-[32ch] text-muted">{t(props.staleCode ? 'staleCode' : 'scanToJoin')}</p>;
   const askButton = <Button onClick={props.onAsk} className="min-h-[52px] border-[1.5px] border-line bg-surface text-[1.0625rem] text-text">{t('askOffice')}</Button>;
 
   if (!ticket || !board) {
@@ -137,7 +140,7 @@ export function PatronView(props: PatronViewProps) {
       );
     }
     return (
-      <Page officeId={officeId} footer={<JoinButton onJoin={props.onJoin} disabled={props.joining || !props.online} label={t('getNumber')} failure={props.failure} />}>
+      <Page officeId={officeId} footer={props.canJoin && !props.staleCode ? <JoinButton onJoin={props.onJoin} disabled={props.joining || !props.online} label={t('getNumber')} failure={props.failure} /> : scanHint}>
         <div className="grid content-start gap-3.5 rounded-[14px] border-2 border-dashed border-line px-6 py-7">
           <h1 className="text-[2.5rem] leading-[1.05] font-bold">{t('joinTitle')}</h1>
           <p className="max-w-[32ch] text-muted">
@@ -173,7 +176,7 @@ export function PatronView(props: PatronViewProps) {
     };
     const [title, detail] = copy[ticket.status];
     return (
-      <Page officeId={officeId} footer={<JoinButton onJoin={props.onJoin} disabled={props.joining || !props.online} label={t('getNewNumber')} failure={props.failure} />}>
+      <Page officeId={officeId} footer={props.canJoin && !props.staleCode ? <JoinButton onJoin={props.onJoin} disabled={props.joining || !props.online} label={t('getNewNumber')} failure={props.failure} /> : scanHint}>
         <TicketStub ticketNo={ticket.ticketNo} closed>
           <StubLine title={title} detail={detail} />
         </TicketStub>

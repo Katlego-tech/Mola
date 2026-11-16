@@ -14,6 +14,18 @@ const STALE_MS = 60_000;
 
 function PatronSession({ officeId }: { officeId: string }) {
   const { t } = useT();
+  const [code, setCode] = useState(() => {
+    const value = new URLSearchParams(window.location.search).get('c');
+    return value && /^[A-Za-z0-9_-]{16}$/.test(value) ? value : null;
+  });
+  const [staleCode, setStaleCode] = useState(false);
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    if (url.searchParams.has('c')) {
+      url.searchParams.delete('c');
+      window.history.replaceState(window.history.state, '', url);
+    }
+  }, []);
   const askSheet = useRef<AskSheetHandle>(null);
   const [stored, setStored] = useState<StoredTicket | null>(() => loadTicket(officeId));
   const storedRef = useRef(stored);
@@ -67,6 +79,7 @@ function PatronSession({ officeId }: { officeId: string }) {
       askSheet.current?.receive(msg);
       switch (msg.type) {
         case 'ticket':
+          setCode(null);
           snapshotAt.current = -Infinity;
           setFailure(null);
           remember({ ticketNo: msg.ticketNo, secret: msg.secret });
@@ -90,6 +103,10 @@ function PatronSession({ officeId }: { officeId: string }) {
           break;
         case 'error':
           setJoining(false);
+          if (msg.code === 'stale_code') {
+            setCode(null);
+            setStaleCode(true);
+          }
           if (msg.code === 'not_called' && confirmRef.current && statusRef.current === 'called') {
             if (confirmRef.current.tries >= 5) clearConfirm();
             else if (confirmTimer.current === null) {
@@ -207,18 +224,21 @@ function PatronSession({ officeId }: { officeId: string }) {
         online={state === 'open'}
         resuming={stored !== null && view === null}
         joining={joining}
+        canJoin={code !== null}
+        staleCode={staleCode}
         confirming={confirming}
         tooLate={tooLate}
         lastUpdateAt={lastUpdateAt}
         failure={failure ? t('internalError') : null}
         onJoin={() => {
+          if (!code || staleCode) return;
           unlockSound();
           setFailure(null);
           setJoining(true);
           snapshotAt.current = -Infinity;
           viewRef.current = false;
           setView(null);
-          send({ action: 'join' });
+          send({ action: 'join', code });
         }}
         onConfirm={() => {
           unlockSound();

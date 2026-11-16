@@ -314,6 +314,7 @@ Resources:
       Environment:
         Variables:
           BROADCAST_QUEUE_URL: !Ref BroadcastQueue
+          STAFF_KEY_SHA256: !Ref StaffKeyHash
       Policies:
         - Statement:
             - Effect: Allow

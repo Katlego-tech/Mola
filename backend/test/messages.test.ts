@@ -9,7 +9,10 @@ const messages: ClientMessage[] = [
   { action: 'notes', lang: 'af' },
   { action: 'saveNotes', text: '', baseVersion: 0, staffKey: randomUUID() },
   { action: 'daySummary', staffKey: randomUUID() },
-  { action: 'join' },
+  { action: 'join', code: randomUUID().replaceAll('-', '').slice(0, 16) },
+  { action: 'join', staffKey: randomUUID() },
+  { action: 'watch', staffKey: randomUUID() },
+  { action: 'refreshJoinCode' },
   { action: 'resume', ticketNo: 42, secret },
   { action: 'confirm', ticketNo: 42, secret },
   { action: 'leave', ticketNo: 42, secret },
@@ -38,7 +41,7 @@ describe('parseClientMessage', () => {
 
   it.each(messages)('refuses extra fields on $action', (message) => {
     for (const field of ['extra', 'ticketNo', 'secret', 'desk', 'staffKey', '__proto__']) {
-      if (!Object.hasOwn(message, field)) {
+      if (!Object.hasOwn(message, field) && !(message.action === 'watch' && field === 'staffKey')) {
         expect(parseClientMessage(JSON.stringify({ ...message, [field]: 'extra' })))
           .toEqual({ error: 'bad_request' });
       }
@@ -115,8 +118,8 @@ describe('parseClientMessage', () => {
   });
 
   it('accepts exactly 1024 bytes and refuses 1025 bytes, including JSON whitespace', () => {
-    const body = JSON.stringify({ action: 'join' });
-    expect(parseClientMessage(body.padEnd(1024))).toEqual({ action: 'join' });
+    const body = JSON.stringify({ action: 'ping' });
+    expect(parseClientMessage(body.padEnd(1024))).toEqual({ action: 'ping' });
     expect(parseClientMessage(body.padEnd(1025))).toEqual({ error: 'bad_request' });
   });
 
@@ -157,4 +160,8 @@ describe('assist message boundaries', () => {
       expect(parseClientMessage(JSON.stringify({ action: 'ask', ticketNo: 1, secret, question: 'ID?', lang }))).toEqual({ error: 'bad_request' });
     }
   });
+});
+
+it.each([{}, { code: '' }, { code: 'x'.repeat(15) }, { code: 'x'.repeat(17) }, { code: '!'.repeat(16) }, { staffKey: '' }, { code: 'x'.repeat(16), staffKey: randomUUID() }])('refuses invalid join credentials %j', fields => {
+  expect(parseClientMessage(JSON.stringify({ action: 'join', ...fields }))).toEqual({ error: 'bad_request' });
 });

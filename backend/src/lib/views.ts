@@ -1,4 +1,5 @@
-import type { Board, TicketView } from './messages';
+import { JOIN_CODE_TTL_MS } from './config';
+import type { Board, ServerMessage, TicketView } from './messages';
 import type { OfficeSnapshot, Ticket } from './model';
 import { waitingLine } from './ordering';
 
@@ -32,5 +33,14 @@ export function boardOf(officeId: string, s: OfficeSnapshot, nowMs: number, rule
     serverTime: nowMs,
     snapshotAt: s.readAt,
     rules,
+  };
+}
+
+export function screenBoard(officeId: string, snapshot: OfficeSnapshot, nowMs: number, rules: Board['rules'], trusted: boolean): Extract<ServerMessage, { type: 'board' }> {
+  const office = snapshot.office;
+  return {
+    type: 'board', board: boardOf(officeId, snapshot, nowMs, rules),
+    ...(trusted && office?.joinCode !== undefined && office.joinCodeIssuedAt !== undefined
+      ? { join: { code: office.joinCode, expiresAt: office.joinCodeIssuedAt + JOIN_CODE_TTL_MS } } : {}),
   };
 }

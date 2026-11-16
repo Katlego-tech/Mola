@@ -27,6 +27,7 @@ const open = () => act(() => { fake.opts?.onState('open'); fake.opts?.onOpen(); 
 const receive = (m: ServerMessage) => act(() => fake.opts?.onMessage(m));
 const sent = () => fake.sent as ClientMessage[];
 const secret = crypto.randomUUID();
+const code = crypto.randomUUID().replaceAll('-', '').slice(0, 16);
 
 beforeEach(() => {
   fake.opts = null;
@@ -34,7 +35,7 @@ beforeEach(() => {
   vi.resetAllMocks();
   alerts.holdWakeLock.mockResolvedValue(null);
   localStorage.clear();
-  window.history.replaceState(null, '', '/?office=demo');
+  window.history.replaceState(null, '', `/?office=demo&c=${code}`);
 });
 afterEach(cleanup);
 
@@ -55,7 +56,7 @@ describe('PatronApp', () => {
     render(<PatronApp />);
     open();
     fireEvent.click(screen.getByRole('button', { name: 'Get a number' }));
-    expect(sent()).toEqual([{ action: 'join' }]);
+    expect(sent()).toEqual([{ action: 'join', code }]);
     receive({ type: 'ticket', officeId: 'demo', ticketNo: 7, secret });
     expect(JSON.parse(localStorage.getItem('mola:demo') ?? 'null')).toEqual({ ticketNo: 7, secret });
     receive({ type: 'status', ticket: ticket(), board });
@@ -417,4 +418,27 @@ it('resets the patron session when the office changes', () => {
   receive({ type: 'status', ticket: ticket({ ticketNo: 8 }), board: { ...board, officeId: 'clinic', snapshotAt: 10 } });
   expect(screen.getByText("You're next")).toBeTruthy();
   expect(screen.getByText('8')).toBeTruthy();
+});
+
+it('strips the code from the address bar and retains it for the join', () => {
+  render(<PatronApp />);
+  expect(new URLSearchParams(window.location.search).has('c')).toBe(false);
+  open();
+  fireEvent.click(screen.getByRole('button', { name: 'Get a number' }));
+  expect(sent()).toContainEqual({ action: 'join', code });
+});
+it('requires a scan when no code is present', () => {
+  window.history.replaceState(null, '', '/?office=clinic');
+  render(<PatronApp />);
+  open();
+  expect(screen.getByText('Scan the code on the screen to take a number.')).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Get a number' })).toBeNull();
+});
+it('removes the join button after a stale code, including reconnect', () => {
+  render(<PatronApp />);
+  open();
+  receive({ type: 'error', code: 'stale_code', message: 'Expired' });
+  open();
+  expect(screen.getByText('That code has expired or was already used. Scan the code on the screen again.')).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Get a number' })).toBeNull();
 });

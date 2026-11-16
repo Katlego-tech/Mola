@@ -2,10 +2,10 @@
 // Drives a deployed Mola stack end to end over its WebSocket, as a screen and patrons do.
 //
 //   node scripts/smoke.mjs --url wss://<api>.execute-api.<region>.amazonaws.com/prod
-//        [--office smoke-<time>] [--staff-key KEY] [--desk "Desk 1"] [--timeout] [--assist]
+//        [--office smoke-<time>] --staff-key KEY [--desk "Desk 1"] [--timeout] [--assist]
 //
-// Without --staff-key: a screen watches, two patrons join (positions 1 and 2), one drops its
-// connection and resumes the same ticket. With --staff-key: the desk calls the first patron,
+// A screen watches, two patrons join (positions 1 and 2), one drops its
+// connection and resumes the same ticket. The desk calls the first patron,
 // who confirms (serving); then calls the second. With --timeout as well: the second patron does
 // not confirm, and the script waits out the confirm window for the drop-back. Finally the second
 // patron leaves. Exits non-zero at the first step that does not happen.
@@ -20,8 +20,8 @@ const args = Object.fromEntries(
     return pairs;
   }, []),
 );
-if (!args.url || (args.assist && typeof args['staff-key'] !== 'string')) {
-  console.error('usage: node scripts/smoke.mjs --url wss://... [--office id] [--staff-key KEY] [--desk "Desk 1"] [--timeout] [--assist]');
+if (!args.url || typeof args['staff-key'] !== 'string') {
+  console.error('usage: node scripts/smoke.mjs --url wss://... [--office id] --staff-key KEY [--desk "Desk 1"] [--timeout] [--assist]');
   process.exit(2);
 }
 const office = args.office ?? `smoke-${Date.now().toString(36)}`;
@@ -80,7 +80,7 @@ ok('a screen watches and receives the empty board');
 
 const a = client('patron');
 await a.opened;
-a.send({ action: 'join' });
+a.send({ action: 'join', staffKey: args['staff-key'] });
 const ta = await a.next((m) => m.type === 'ticket', 'patron A ticket');
 const sa = await a.next(statusOf(ta.ticketNo, 'waiting'), 'patron A status');
 if (sa.ticket.position !== 1) fail(`patron A should be position 1, got ${sa.ticket.position}`);
@@ -88,7 +88,7 @@ ok(`patron A takes ticket ${ta.ticketNo} at position 1`);
 
 const b = client('patron');
 await b.opened;
-b.send({ action: 'join' });
+b.send({ action: 'join', staffKey: args['staff-key'] });
 const tb = await b.next((m) => m.type === 'ticket', 'patron B ticket');
 if (tb.ticketNo === ta.ticketNo) fail('two patrons got the same ticket number');
 const sb = await b.next(statusOf(tb.ticketNo, 'waiting'), 'patron B status');
@@ -154,7 +154,7 @@ if (args.assist) {
     if (read.text !== fixture.notes || read.version !== saved.version) throw new Error('notes read back did not match');
     ok('saved notes read back with the same text and version');
 
-    ticket = await assistRequest(b, { action: 'join' }, (m) => m.type === 'ticket', 'assist ticket');
+    ticket = await assistRequest(b, { action: 'join', staffKey: args['staff-key'] }, (m) => m.type === 'ticket', 'assist ticket');
     const credentials = { ticketNo: ticket.ticketNo, secret: ticket.secret };
     const answerable = fixture.cases.find((item) => item.kind === 'answerable');
     const answer = await assistRequest(b, { action: 'ask', ...credentials, question: answerable.question, lang: answerable.lang }, (m) => m.type === 'answer' && m.question === answerable.question, 'answerable question');

@@ -107,7 +107,7 @@ const join = (p, i) => new Promise((resolve) => {
     resolve();
   };
   p.listeners.add(onReply);
-  p.send({ action: 'join' });
+  p.send({ action: 'join', staffKey: args['staff-key'] });
 });
 for (let i = 0; i < phones.length; i += BATCH) {
   await Promise.all(phones.slice(i, i + BATCH).map((p, j) => join(p, i + j)));

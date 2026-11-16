@@ -1,4 +1,6 @@
 {
+  "scanToJoin": "Skandeer die kode op die skerm om 'n nommer te kry.",
+  "staleCode": "Hierdie kode het verval of is reeds gebruik. Skandeer die kode op die skerm weer.",
   "doneTitle": "Jy is gehelp",
   "yourTurn": "Dit is jou beurt.",
   "invalidOfficeTitle": "Hierdie kode is nie vir 'n kantoor nie.",

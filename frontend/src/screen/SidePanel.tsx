@@ -1,27 +1,30 @@
+import { Button } from '@/components/ui/button';
 import QRCode from 'qrcode';
 import { useEffect, useState } from 'react';
 import type { Board } from '@/lib/messages';
 
-function useQr(text: string): string | null {
-  const [src, setSrc] = useState<string | null>(null);
+function useQr(text: string | null): string | null {
+  const [image, setImage] = useState<{ text: string; src: string } | null>(null);
   useEffect(() => {
     let live = true;
+    if (text === null) return;
     QRCode.toDataURL(text, { errorCorrectionLevel: 'M', margin: 1, width: 512, color: { dark: '#1b1530', light: '#fdfcfe' } })
-      .then((url) => live && setSrc(url))
-      .catch(() => live && setSrc(null));
+      .then((url) => live && setImage({ text, src: url }))
+      .catch(() => live && setImage(null));
     return () => {
       live = false;
     };
   }, [text]);
-  return src;
+  return image?.text === text ? image.src : null;
 }
 
-export function SidePanel({ board, joinUrl }: { board: Board; joinUrl: string }) {
+export function SidePanel({ board, joinUrl, onUnlock }: { board: Board; joinUrl: string | null; onUnlock?(): void }) {
   const qr = useQr(joinUrl);
   return (
     <aside className="grid grid-rows-[auto_auto_1fr_auto] gap-[3vh] bg-ticket px-[3vw] py-[5vh] text-ink">
-      <h2 className="text-[4.4vh] leading-[1.05] font-bold">Scan to get a number</h2>
+      <h2 className="text-[4.4vh] leading-[1.05] font-bold">{joinUrl ? 'Scan to get a number' : 'Unlock this screen to show the join code'}</h2>
       <div className="grid size-[34vh] place-items-center rounded-[14px] bg-[#fdfcfe] p-[2.4vh]">
+        {!joinUrl && <Button variant="ticket" onClick={onUnlock}>Unlock</Button>}
         {qr && <img src={qr} alt="QR code to join the queue" className="size-full" />}
       </div>
       <div className="self-end">
