@@ -1,12 +1,12 @@
 import { broadcast } from '../lib/broadcast';
 import { rules, ticketLifetimeSeconds } from '../lib/config';
-import { bindTicketConnection, getConnection, loadOffice, markLeft, markServing, nextTicketNo, putScreen, putTicket, setConnectionTicket } from '../lib/db';
+import { bindTicketConnection, finishServing, getConnection, loadOffice, markLeft, markServing, nextTicketNo, putScreen, putTicket, setConnectionTicket } from '../lib/db';
 import { parseClientMessage } from '../lib/messages';
 import { ACTIVE } from '../lib/model';
 import { positions, waitingLine } from '../lib/ordering';
 import { OK, replyError } from '../lib/reply';
 import { issueSecret, verifySecret } from '../lib/secret';
-import { succeedTask } from '../lib/sfn';
+import { failTask, succeedTask } from '../lib/sfn';
 import { boardOf, ticketView } from '../lib/views';
 import { send } from '../lib/ws';
 
@@ -116,6 +116,33 @@ export async function handler(event: ClientEvent) {
       await broadcast(conn.officeId, rules());
       return OK;
     }
+    case 'leave': {
+      const snapshot = await loadOffice(conn.officeId);
+      let ticket = snapshot.tickets.find(ticket => ticket.ticketNo === msg.ticketNo);
+      if (!ticket || !verifySecret(msg.secret, ticket.secretHash)) {
+        await replyError(connectionId, 'bad_ticket');
+        return OK;
+      }
+      const now = Date.now();
+      const nowIso = new Date(now).toISOString();
+      if (ticket.status === 'called' && ticket.taskToken) {
+        if (await failTask(ticket.taskToken, 'Patron.Left', 'Patron left the queue') === 'dead') {
+          const refreshed = await loadOffice(conn.officeId);
+          ticket = refreshed.tickets.find(ticket => ticket.ticketNo === msg.ticketNo);
+        }
+      }
+      try {
+        if (ticket?.status === 'waiting' || ticket?.status === 'called') {
+          await markLeft(conn.officeId, msg.ticketNo, ticket.status, nowIso);
+        } else if (ticket?.status === 'serving') {
+          await finishServing(conn.officeId, msg.ticketNo, nowIso);
+        }
+      } catch (error) {
+        if (!(error instanceof Error && error.name === 'ConditionalCheckFailedException')) throw error;
+      }
+      await broadcast(conn.officeId, rules());
+      return OK;
+    }
     case 'watch': {
       if (conn.role !== 'screen') {
         await replyError(connectionId, 'forbidden');
@@ -129,8 +156,7 @@ export async function handler(event: ClientEvent) {
     case 'ping':
       return OK;
     default:
-      // leave and callNext get their own routes in later tasks. Until a
-      // route exists API Gateway delivers them here, and the API really has no such action yet.
+      // callNext belongs to the staff function.
       await replyError(connectionId, 'unknown_action');
       return OK;
   }
