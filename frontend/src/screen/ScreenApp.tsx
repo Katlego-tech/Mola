@@ -28,7 +28,9 @@ function ScreenBoard({ officeId, staff }: { officeId: string; staff: boolean }) 
   const [view, setView] = useState<{ board: Board; receivedAt: number } | null>(null);
   const [desk, setDesk] = useState(() => read(localStorage, `mola:desk:${officeId}`) ?? 'Desk 1');
   const [pending, setPending] = useState(false);
-  const pendingRef = useRef(false);
+  // The call in flight: the desk it was sent for, and the ticket that desk was already calling
+  // (if any). Only a different ticket at that desk on the board answers it.
+  const pendingRef = useRef<{ desk: string; before: number | null } | null>(null);
   const [log, setLog] = useState<string | null>(null);
   const [unlock, setUnlock] = useState<{ open: boolean; error: boolean }>({ open: false, error: false });
   const deskRef = useRef(desk);
@@ -37,7 +39,7 @@ function ScreenBoard({ officeId, staff }: { officeId: string; staff: boolean }) 
 
   const { state, send } = useOfficeSocket(officeId, 'screen', {
     onOpen: (sendNow) => {
-      pendingRef.current = false;
+      pendingRef.current = null;
       setPending(false);
       sendNow({ action: 'watch' });
     },
@@ -46,21 +48,22 @@ function ScreenBoard({ officeId, staff }: { officeId: string; staff: boolean }) 
         case 'board': {
           boardRef.current = msg.board;
           setView({ board: msg.board, receivedAt: Date.now() });
-          const mine = msg.board.calling.find((c) => c.desk === deskRef.current);
-          if (pendingRef.current && mine) {
-            setLog(`Called ${mine.ticketNo} to ${mine.desk}.`);
-            pendingRef.current = false;
+          const sent = pendingRef.current;
+          const answer = sent && msg.board.calling.find((c) => c.desk === sent.desk && c.ticketNo !== sent.before);
+          if (answer) {
+            setLog(`Called ${answer.ticketNo} to ${answer.desk}.`);
+            pendingRef.current = null;
             setPending(false);
           }
           break;
         }
         case 'notice':
           if (msg.code === 'queue_empty') setLog('Nobody is waiting.');
-          pendingRef.current = false;
+          pendingRef.current = null;
           setPending(false);
           break;
         case 'error': {
-          pendingRef.current = false;
+          pendingRef.current = null;
           setPending(false);
           if (msg.code === 'forbidden') {
             write(sessionStorage, keyName, null);
@@ -83,7 +86,8 @@ function ScreenBoard({ officeId, staff }: { officeId: string; staff: boolean }) 
       setLog('Give this desk a name of up to 20 letters, numbers or spaces.');
       return;
     }
-    pendingRef.current = true;
+    const desk = deskRef.current;
+    pendingRef.current = { desk, before: boardRef.current?.calling.find((c) => c.desk === desk)?.ticketNo ?? null };
     setPending(true);
     send({ action: 'callNext', desk: deskRef.current, staffKey });
   };
