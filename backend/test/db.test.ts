@@ -1,5 +1,5 @@
 import { ConditionalCheckFailedException } from '@aws-sdk/client-dynamodb';
-import { DeleteCommand, DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
+import { DeleteCommand, DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand, TransactWriteCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import { mockClient } from 'aws-sdk-client-mock';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as db from '../src/lib/db';
@@ -144,5 +144,58 @@ describe('writes', () => {
     mock.onAnyCommand().rejects(error);
     await expect(run()).rejects.toBe(error);
     expect(mock.calls()).toHaveLength(1);
+  });
+});
+
+
+describe('assist persistence', () => {
+  it('reads notes consistently from their own partition', async () => {
+    mock.on(GetCommand).resolvesOnce({}).resolvesOnce({ Item: { version: 3, text: 'Bring ID' } });
+    expect(await db.getNotes('clinic')).toBeNull();
+    expect(await db.getNotes('clinic')).toEqual({ version: 3, text: 'Bring ID' });
+    expect(mock.call(0).args[0].input).toEqual({ TableName: 'test-table', Key: { pk: 'NOTES#clinic', sk: 'TEXT' }, ConsistentRead: true });
+  });
+  it.each([0, 3])('saves text and version atomically from base %s', async base => {
+    mock.on(TransactWriteCommand).resolves({});
+    expect(await db.saveNotes('clinic', '', base, iso)).toBe(base + 1);
+    expect(mock.commandCalls(TransactWriteCommand)[0]?.args[0].input.TransactItems).toEqual([
+      { Update: { TableName: 'test-table', Key: { pk: 'OFFICE#clinic', sk: 'META' },
+        UpdateExpression: 'SET notesVersion = :next, officeId = if_not_exists(officeId, :o), createdAt = if_not_exists(createdAt, :now)',
+        ConditionExpression: base === 0 ? '(notesVersion = :base OR attribute_not_exists(notesVersion))' : 'notesVersion = :base',
+        ExpressionAttributeValues: { ':next': base + 1, ':base': base, ':o': 'clinic', ':now': iso } } },
+      { Put: { TableName: 'test-table', Item: { pk: 'NOTES#clinic', sk: 'TEXT', officeId: 'clinic', version: base + 1, text: '', updatedAt: iso } } },
+    ]);
+  });
+  it('propagates a cancelled notes transaction', async () => {
+    const error = Object.assign(new Error('conflict'), { name: 'TransactionCanceledException' });
+    mock.on(TransactWriteCommand).rejects(error);
+    await expect(db.saveNotes('clinic', 'New notes', 1, iso)).rejects.toBe(error);
+  });
+  it('uses versioned translation keys and immutable puts', async () => {
+    mock.on(GetCommand).resolvesOnce({}).resolvesOnce({ Item: { text: 'Translated' } });
+    expect(await db.getNotesTranslation('clinic', 'zu', 3)).toBeNull();
+    expect(await db.getNotesTranslation('clinic', 'zu', 3)).toEqual({ text: 'Translated' });
+    expect(mock.call(0).args[0].input).toMatchObject({ Key: { pk: 'NOTES#clinic', sk: 'LANG#zu#000003' } });
+    mock.on(PutCommand).resolves({});
+    await db.putNotesTranslation('clinic', 'zu', 3, 'Translated', 100);
+    expect(mock.commandCalls(PutCommand)[0]?.args[0].input).toEqual({ TableName: 'test-table',
+      Item: { pk: 'NOTES#clinic', sk: 'LANG#zu#000003', officeId: 'clinic', lang: 'zu', version: 3, text: 'Translated', expiresAt: 100 },
+      ConditionExpression: 'attribute_not_exists(pk)' });
+  });
+  it('reserves an ask only for active tickets below the limit and returns the new count', async () => {
+    mock.on(UpdateCommand).resolves({ Attributes: { asks: 4 } });
+    expect(await db.reserveAsk('clinic', 42, 10)).toBe(4);
+    expect(mock.call(0).args[0].input).toEqual({ TableName: 'test-table', Key: { pk: 'OFFICE#clinic', sk: 'TICKET#000042' },
+      UpdateExpression: 'ADD asks :one', ReturnValues: 'UPDATED_NEW',
+      ConditionExpression: '#s IN (:waiting, :called, :serving) AND (attribute_not_exists(asks) OR asks < :max)',
+      ExpressionAttributeNames: { '#s': 'status' },
+      ExpressionAttributeValues: { ':one': 1, ':max': 10, ':waiting': 'waiting', ':called': 'called', ':serving': 'serving' } });
+  });
+  it('refunds only positive ask counts', async () => {
+    mock.on(UpdateCommand).resolves({});
+    await db.refundAsk('clinic', 42);
+    expect(mock.call(0).args[0].input).toEqual({ TableName: 'test-table', Key: { pk: 'OFFICE#clinic', sk: 'TICKET#000042' },
+      UpdateExpression: 'ADD asks :minus', ConditionExpression: 'asks > :zero',
+      ExpressionAttributeValues: { ':minus': -1, ':zero': 0 } });
   });
 });

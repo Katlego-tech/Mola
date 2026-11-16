@@ -5,6 +5,10 @@ import type { ClientMessage } from '../src/lib/messages';
 
 const secret = randomUUID();
 const messages: ClientMessage[] = [
+  { action: 'ask', ticketNo: 42, secret, question: 'Bring ID?', lang: 'zu' },
+  { action: 'notes', lang: 'af' },
+  { action: 'saveNotes', text: '', baseVersion: 0, staffKey: randomUUID() },
+  { action: 'daySummary', staffKey: randomUUID() },
   { action: 'join' },
   { action: 'resume', ticketNo: 42, secret },
   { action: 'confirm', ticketNo: 42, secret },
@@ -124,5 +128,33 @@ describe('parseClientMessage', () => {
     expect(Buffer.byteLength(atLimit)).toBe(1024);
     expect(parseClientMessage(atLimit)).toEqual(message);
     expect(parseClientMessage(`${atLimit} `)).toEqual({ error: 'bad_request' });
+  });
+});
+
+
+describe('assist message boundaries', () => {
+  it('trims questions before applying length limits', () => {
+    const message = { action: 'ask', ticketNo: 1, secret, question: '  Bring ID?  ', lang: 'en' };
+    expect(parseClientMessage(JSON.stringify(message))).toEqual({ ...message, question: 'Bring ID?' });
+    for (const question of ['', '   ', 'a'.repeat(301)]) {
+      expect(parseClientMessage(JSON.stringify({ ...message, question }))).toEqual({ error: 'bad_request' });
+    }
+    expect(parseClientMessage(JSON.stringify({ ...message, question: 'a'.repeat(300) }))).not.toHaveProperty('error');
+  });
+  it('accepts full Unicode notes and refuses excess text or invalid versions', () => {
+    const message = { action: 'saveNotes', text: '界'.repeat(4000), baseVersion: 0, staffKey: randomUUID() };
+    expect(parseClientMessage(JSON.stringify(message))).toEqual(message);
+    for (const text of ['a'.repeat(4001), 42, null]) {
+      expect(parseClientMessage(JSON.stringify({ ...message, text }))).toEqual({ error: 'bad_request' });
+    }
+    for (const baseVersion of [-1, 1.5, 2 ** 53, null, '0']) {
+      expect(parseClientMessage(JSON.stringify({ ...message, baseVersion }))).toEqual({ error: 'bad_request' });
+    }
+  });
+  it('refuses unknown languages', () => {
+    for (const lang of ['fr', 'toString', null, 1]) {
+      expect(parseClientMessage(JSON.stringify({ action: 'notes', lang }))).toEqual({ error: 'bad_request' });
+      expect(parseClientMessage(JSON.stringify({ action: 'ask', ticketNo: 1, secret, question: 'ID?', lang }))).toEqual({ error: 'bad_request' });
+    }
   });
 });

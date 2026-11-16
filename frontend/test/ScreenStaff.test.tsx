@@ -17,7 +17,7 @@ const { ScreenApp } = await import('../src/screen/ScreenApp');
 
 const rules = { confirmWindowSeconds: 120, dropBackPlaces: 3, maxMisses: 2 };
 const board = (over: Partial<Board> = {}): Board =>
-  ({ officeId: 'demo', calling: [], serving: [], waitingCount: 2, upNext: [7, 8], serverTime: Date.now(), rules, ...over });
+  ({ officeId: 'demo', notesVersion: 0, calling: [], serving: [], waitingCount: 2, upNext: [7, 8], serverTime: Date.now(), rules, ...over });
 const open = () => act(() => { fake.opts?.onState('open'); fake.opts?.onOpen(); });
 const receive = (m: ServerMessage) => act(() => fake.opts?.onMessage(m));
 const key = 'a-staff-key-for-tests';

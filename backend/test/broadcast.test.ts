@@ -46,7 +46,7 @@ describe('broadcast', () => {
     await expect(broadcast('demo', rules)).resolves.toBeUndefined();
     expect(loadOffice).toHaveBeenCalledExactlyOnceWith('demo');
     const board: Board = {
-      officeId: 'demo', calling: [{ ticketNo: 2, desk: 'Desk 1', deadline: nowMs + 30_000 }],
+      officeId: 'demo', notesVersion: 0, calling: [{ ticketNo: 2, desk: 'Desk 1', deadline: nowMs + 30_000 }],
       serving: [{ ticketNo: 3, desk: 'Desk 1' }], waitingCount: 2, upNext: [7, 1], serverTime: nowMs, rules,
     };
     expect(send).toHaveBeenCalledTimes(8);
@@ -64,7 +64,7 @@ describe('broadcast', () => {
     vi.mocked(loadOffice).mockResolvedValue(snapshot([], ['screen']));
     await broadcast('demo', rules);
     expect(send).toHaveBeenCalledExactlyOnceWith('screen', { type: 'board', board: {
-      officeId: 'demo', calling: [], serving: [], waitingCount: 0, upNext: [], serverTime: nowMs, rules,
+      officeId: 'demo', notesVersion: 0, calling: [], serving: [], waitingCount: 0, upNext: [], serverTime: nowMs, rules,
     } });
   });
 
@@ -75,7 +75,7 @@ describe('broadcast', () => {
     })], ['screen']));
     await broadcast('demo', rules);
     expect(send).toHaveBeenCalledExactlyOnceWith('screen', { type: 'board', board: {
-      officeId: 'demo', calling: [], serving: [], waitingCount: 0, upNext: [], serverTime: nowMs, rules,
+      officeId: 'demo', notesVersion: 0, calling: [], serving: [], waitingCount: 0, upNext: [], serverTime: nowMs, rules,
     } });
     expect(removeTicketConnection).not.toHaveBeenCalled();
   });

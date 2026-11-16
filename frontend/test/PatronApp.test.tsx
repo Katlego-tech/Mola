@@ -19,7 +19,7 @@ vi.mock('../src/lib/alerts', () => alerts);
 const { PatronApp } = await import('../src/patron/PatronApp');
 
 const rules = { confirmWindowSeconds: 120, dropBackPlaces: 3, maxMisses: 2 };
-const board: Board = { officeId: 'demo', calling: [], serving: [], waitingCount: 1, upNext: [7], serverTime: Date.now(), rules };
+const board: Board = { officeId: 'demo', notesVersion: 0, calling: [], serving: [], waitingCount: 1, upNext: [7], serverTime: Date.now(), rules };
 const ticket = (over: Partial<TicketView> = {}): TicketView =>
   ({ ticketNo: 7, status: 'waiting', position: 1, desk: null, deadline: null, misses: 0, ...over });
 

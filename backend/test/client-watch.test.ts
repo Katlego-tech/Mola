@@ -28,7 +28,7 @@ describe('watch', () => {
     expect(ws.send).toHaveBeenCalledWith('c-9', {
       type: 'board',
       board: {
-        officeId: 'demo', calling: [], serving: [], waitingCount: 0, upNext: [],
+        officeId: 'demo', notesVersion: 0, calling: [], serving: [], waitingCount: 0, upNext: [],
         serverTime: Date.parse('2027-03-01T08:00:00Z'),
         rules: { confirmWindowSeconds: 120, dropBackPlaces: 3, maxMisses: 2 },
       },

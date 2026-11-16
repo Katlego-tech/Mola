@@ -18,6 +18,7 @@ export function boardOf(officeId: string, s: OfficeSnapshot, nowMs: number, rule
   const line = waitingLine(live, nowMs / 1000);
   return {
     officeId,
+    notesVersion: s.office?.notesVersion ?? 0,
     calling: live.filter(ticket => ticket.status === 'called').map(ticket => ({
       ticketNo: ticket.ticketNo,
       desk: ticket.desk as string,
