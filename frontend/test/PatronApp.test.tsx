@@ -487,6 +487,29 @@ describe('patron speech', () => {
     receive({ type: 'status', ticket: { ...called, deadline: (called.deadline ?? 0) + 1000 }, board });
     expect(sent().filter(m => m.action === 'speak')).toHaveLength(2);
   });
+  it.each(['open', 'disconnect', 'failure'] as const)('retries an unanswered call after %s without repeating a queued announcement', reason => {
+    render(<PatronApp />); open();
+    fireEvent.click(screen.getByRole('button', { name: 'Voice' }));
+    const called = ticket({ status: 'called', desk: 'Desk 1', deadline: Date.now() + 120000 });
+    receive({ type: 'status', ticket: called, board });
+    receive({ type: 'status', ticket: called, board });
+    expect(sent().filter(m => m.action === 'speak')).toHaveLength(1);
+    if (reason === 'failure') receive({ type: 'error', code: 'voice_unavailable', message: 'Unavailable' });
+    else {
+      if (reason === 'disconnect') act(() => fake.opts?.onState('backoff'));
+      open();
+    }
+    expect(sent().filter(m => m.action === 'speak')).toHaveLength(1);
+    receive({ type: 'status', ticket: called, board });
+    receive({ type: 'status', ticket: called, board });
+    expect(sent().filter(m => m.action === 'speak')).toHaveLength(2);
+    receive({ type: 'speech', what: 'call', ticketNo: 7, url: '/voice/call.mp3' });
+    receive({ type: 'status', ticket: called, board });
+    act(() => fake.opts?.onState('backoff'));
+    open();
+    receive({ type: 'status', ticket: called, board });
+    expect(sent().filter(m => m.action === 'speak')).toHaveLength(2);
+  });
 });
 
 
