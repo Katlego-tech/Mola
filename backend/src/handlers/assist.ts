@@ -52,7 +52,7 @@ export async function handler(event: ClientEvent) {
               || typeof result.answer !== 'string' || result.answer.length > 600) {
               throw new NovaError('malformed');
             }
-            found = result.found && groundedNumbers(result.answer, [notes.text, msg.question]);
+            found = result.found && groundedNumbers(result.answer, [notes.text]);
             answer = found ? result.answer : null;
           } catch {
             await refundAsk(conn.officeId, msg.ticketNo).catch(() => undefined);
