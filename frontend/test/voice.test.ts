@@ -1,14 +1,16 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { createVoicePlayer } from '../src/lib/voice';
+import { act, cleanup, renderHook } from '@testing-library/react';
+import { createVoicePlayer, useVoice } from '../src/lib/voice';
 
 let audio: HTMLAudioElement;
 beforeEach(() => {
+  localStorage.clear();
   audio = document.createElement('audio');
   vi.stubGlobal('Audio', vi.fn(function () { return audio; }));
   vi.spyOn(audio, 'play').mockResolvedValue();
   vi.spyOn(audio, 'pause').mockImplementation(() => undefined);
 });
-afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 it('plays queued audio only after the previous clip ends', () => {
   const player = createVoicePlayer();
@@ -52,4 +54,28 @@ it('stops playback and discards queued clips when disabled', () => {
   audio.dispatchEvent(new Event('ended'));
   expect(audio.pause).toHaveBeenCalledTimes(1);
   expect(audio.play).toHaveBeenCalledTimes(1);
+});
+
+it.each(['bad_ticket', 'internal'] as const)('passes ambiguous %s errors through while releasing the pending speech request', code => {
+  localStorage.setItem('test-voice', 'true');
+  const { result } = renderHook(() => useVoice('test-voice'));
+  const send = vi.fn();
+  act(() => {
+    result.current.call(7, send);
+    result.current.call(8, send);
+  });
+  expect(send).toHaveBeenCalledTimes(1);
+  expect(result.current.receive({ type: 'error', code, message: 'Try again.' })).toBe(false);
+  expect(send).toHaveBeenCalledTimes(2);
+  expect(send).toHaveBeenLastCalledWith({ action: 'speak', what: 'call', ticketNo: 8 });
+});
+
+it('consumes a voice error and leaves unrelated errors for other handlers', () => {
+  localStorage.setItem('test-voice', 'true');
+  const { result } = renderHook(() => useVoice('test-voice'));
+  const send = vi.fn();
+  result.current.call(7, send);
+  expect(result.current.receive({ type: 'error', code: 'desk_busy', message: 'Busy.' })).toBe(false);
+  expect(result.current.receive({ type: 'error', code: 'voice_unavailable', message: 'Unavailable.' })).toBe(true);
+  expect(result.current.receive({ type: 'speech', what: 'call', ticketNo: 7, url: '/voice/first.mp3' })).toBe(false);
 });

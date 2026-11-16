@@ -66,7 +66,7 @@ export function createVoicePlayer() {
 }
 
 type Speak = Extract<ClientMessage, { action: 'speak' }>;
-type Request = { message: Speak; send(message: ClientMessage): void; failed(): void };
+type Request = { message: Speak; send(message: ClientMessage): void; failed(): void; queued?(): void };
 
 export function useVoice(storageKey: string) {
   const [enabled, setEnabled] = useState(() => {
@@ -84,19 +84,26 @@ export function useVoice(storageKey: string) {
     try { localStorage.setItem(storageKey, String(value)); }
     catch { /* Storage may be disabled. */ }
   };
+  const discardCalls = () => {
+    requests.current = requests.current.filter(request => {
+      if (request.message.what !== 'call') return true;
+      request.failed();
+      return false;
+    });
+  };
   const blocked = () => {
     persist(false);
     setHint(true);
     player.stop();
-    requests.current = requests.current.filter(request => request.message.what !== 'call');
+    discardCalls();
   };
   const pump = () => {
     if (pending.current) return;
     pending.current = requests.current.shift() ?? null;
     if (pending.current) pending.current.send(pending.current.message);
   };
-  const request = (message: Speak, send: Request['send'], failed: () => void) => {
-    requests.current.push({ message, send, failed });
+  const request = (message: Speak, send: Request['send'], failed: () => void, queued?: () => void) => {
+    requests.current.push({ message, send, failed, queued });
     pump();
   };
   const interrupt = useCallback(() => {
@@ -116,11 +123,12 @@ export function useVoice(storageKey: string) {
       if (next) player.unlock(blocked);
       else {
         player.stop();
-        requests.current = requests.current.filter(request => request.message.what !== 'call');
+        discardCalls();
       }
     },
-    call(ticketNo: number, send: Request['send']) {
-      if (enabledRef.current) request({ action: 'speak', what: 'call', ticketNo }, send, () => undefined);
+    call(ticketNo: number, send: Request['send'], queued?: () => void, failed: () => void = () => undefined) {
+      if (enabledRef.current) request({ action: 'speak', what: 'call', ticketNo }, send, failed, queued);
+      else failed();
     },
     listen(ticketNo: number, secret: string, text: string, send: Request['send'], failed: () => void) {
       player.unlock(failed);
@@ -133,14 +141,15 @@ export function useVoice(storageKey: string) {
         pending.current = null;
         if (message.what === 'answer' || enabledRef.current) {
           player.play(message.url, message.what === 'call' ? blocked : held.failed);
-        }
+          held.queued?.();
+        } else held.failed();
         pump();
         return true;
       } else if (message.type === 'error' && (message.code === 'voice_unavailable' || message.code === 'bad_ticket' || message.code === 'internal')) {
         pending.current = null;
         held.failed();
         pump();
-        return true;
+        return message.code === 'voice_unavailable';
       }
       return false;
     },

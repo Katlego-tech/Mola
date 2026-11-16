@@ -439,9 +439,6 @@ Resources:
             - Effect: Allow
               Action: s3:ListBucket
               Resource: !GetAtt WebBucket.Arn
-              Condition:
-                StringLike:
-                  s3:prefix: voice/*
             - Effect: Allow
               Action: bedrock:InvokeModel
               Resource: !Sub arn:${AWS::Partition}:bedrock:${NovaRegion}:${AWS::AccountId}:inference-profile/global.${NovaFoundationModel}

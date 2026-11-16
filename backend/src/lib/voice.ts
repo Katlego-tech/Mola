@@ -15,7 +15,10 @@ export async function speechUrl(text: string, onCache?: (cached: boolean) => voi
     onCache?.(true);
     return `/${Key}`;
   } catch (error) {
-    if (!(error instanceof Error && error.name === 'NotFound')) throw error;
+    if (!((error instanceof Error && (error.name === 'NotFound' || error.name === 'AccessDenied')) ||
+      (typeof error === 'object' && error !== null && '$metadata' in error &&
+        typeof error.$metadata === 'object' && error.$metadata !== null &&
+        'httpStatusCode' in error.$metadata && error.$metadata.httpStatusCode === 403))) throw error;
   }
   onCache?.(false);
   const { AudioStream } = await polly.send(new SynthesizeSpeechCommand({

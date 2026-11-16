@@ -35,6 +35,8 @@ function ScreenBoard({ officeId, staff }: { officeId: string; staff: boolean }) 
   const interruptVoice = voice.interrupt;
   const sendRef = useRef<((msg: ClientMessage) => void) | null>(null);
   const announced = useRef(new Set<string>());
+  const announcing = useRef(new Set<string>());
+  const currentCalls = useRef(new Set<string>());
   const [view, setView] = useState<{ board: Board; receivedAt: number } | null>(null);
   const [join, setJoin] = useState<{ code: string; expiresAt: number } | null>(null);
   const lastRefresh = useRef<{ code: string; expiresAt: number; sentAt: number } | null>(null);
@@ -90,12 +92,22 @@ function ScreenBoard({ officeId, staff }: { officeId: string; staff: boolean }) 
         case 'status':
         case 'board': {
           if (msg.type === 'board') setJoin(msg.join ?? null);
+          currentCalls.current = new Set(msg.board.calling
+            .filter(call => call.deadline !== null)
+            .map(call => `${call.ticketNo}:${call.desk}:${call.deadline}`));
+          for (const key of announced.current) {
+            if (!currentCalls.current.has(key)) announced.current.delete(key);
+          }
           if (voice.enabled) {
             for (const call of msg.board.calling) {
-              const key = `${call.ticketNo}:${call.desk}`;
-              if (announced.current.has(key)) continue;
-              announced.current.add(key);
-              voice.call(call.ticketNo, message => sendRef.current?.(message));
+              if (call.deadline === null) continue;
+              const key = `${call.ticketNo}:${call.desk}:${call.deadline}`;
+              if (announced.current.has(key) || announcing.current.has(key)) continue;
+              announcing.current.add(key);
+              voice.call(call.ticketNo, message => sendRef.current?.(message), () => {
+                announcing.current.delete(key);
+                if (currentCalls.current.has(key)) announced.current.add(key);
+              }, () => announcing.current.delete(key));
             }
           }
           boardRef.current = msg.board;
