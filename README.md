@@ -31,9 +31,10 @@ It is built to cost nothing while the office is closed.
 
 ## Demo
 
-- Live: https://d2o4sybugfoqv0.cloudfront.net/screen?office=demo (the counter screen). Unlock it once
-  with the staff key (`123.Judge` on the demo stack) to show the join QR code, then scan it with a
-  phone. Staff controls (call next, office notes, day summary): add `&staff=1`.
+- The hosted demo stack has been taken down. Deploy your own with the steps in
+  [How to run it](#how-to-run-it): open `/screen?office=demo`, unlock it once with your staff key to
+  show the join QR code, then scan it with a phone. Staff controls (call next, office notes, day
+  summary): add `&staff=1`.
 
 ## Architecture
 
