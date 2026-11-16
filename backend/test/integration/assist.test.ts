@@ -109,3 +109,28 @@ describe('atomic office notes', () => {
     expect(await db.getNotesTranslation(officeId, 'zu', 3)).toEqual({ text: 'First translation' });
   });
 });
+
+
+describe('speech reservations', () => {
+  it.each(['waiting', 'called', 'serving'] as const)('reserves and refunds from %s without changing queue state', async status => {
+    const ticketNo = await seed(status);
+    const before = await read(ticketNo);
+    expect(await db.reserveSpeak('clinic', ticketNo, 20)).toBe(1);
+    expect(await read(ticketNo)).toEqual({ ...before, speaks: 1 });
+    await db.refundSpeak('clinic', ticketNo);
+    expect(await read(ticketNo)).toEqual({ ...before, speaks: 0 });
+    await expect(db.refundSpeak('clinic', ticketNo)).rejects.toMatchObject({ name: 'ConditionalCheckFailedException' });
+  });
+  it.each(['done', 'left', 'no_show'] as const)('refuses %s', async status => {
+    const ticketNo = await seed(status);
+    await expect(db.reserveSpeak('clinic', ticketNo, 20)).rejects.toMatchObject({ name: 'ConditionalCheckFailedException' });
+  });
+  it('permits exactly twenty concurrent reservations and another after a refund', async () => {
+    const ticketNo = await seed('waiting');
+    const results = await Promise.allSettled(Array.from({ length: 21 }, () => db.reserveSpeak('clinic', ticketNo, 20)));
+    expect(results.filter(result => result.status === 'fulfilled')).toHaveLength(20);
+    expect((await read(ticketNo))?.speaks).toBe(20);
+    await db.refundSpeak('clinic', ticketNo);
+    expect(await db.reserveSpeak('clinic', ticketNo, 20)).toBe(20);
+  });
+});

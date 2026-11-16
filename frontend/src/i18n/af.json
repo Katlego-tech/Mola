@@ -1,6 +1,10 @@
 {
   "scanToJoin": "Skandeer die kode op die skerm om 'n nommer te kry.",
   "staleCode": "Hierdie kode het verval of is reeds gebruik. Skandeer die kode op die skerm weer.",
+  "voice": "Stem",
+  "listen": "Luister",
+  "playFailed": "Kon nie die antwoord speel nie.",
+  "voiceHint": "Tik om die stem aan te skakel",
   "doneTitle": "Jy is gehelp",
   "yourTurn": "Dit is jou beurt.",
   "invalidOfficeTitle": "Hierdie kode is nie vir 'n kantoor nie.",

@@ -32,3 +32,4 @@ export function officeTimeZone(): string {
 }
 
 export const JOIN_CODE_TTL_MS = 120_000;
+export const MAX_SPEAKS_PER_TICKET = 20;

@@ -165,3 +165,22 @@ describe('assist message boundaries', () => {
 it.each([{}, { code: '' }, { code: 'x'.repeat(15) }, { code: 'x'.repeat(17) }, { code: '!'.repeat(16) }, { staffKey: '' }, { code: 'x'.repeat(16), staffKey: randomUUID() }])('refuses invalid join credentials %j', fields => {
   expect(parseClientMessage(JSON.stringify({ action: 'join', ...fields }))).toEqual({ error: 'bad_request' });
 });
+
+
+describe('speech messages', () => {
+  it('parses a call and an answer', () => {
+    const call = { action: 'speak', what: 'call', ticketNo: 42 };
+    const answer = { action: 'speak', what: 'answer', ticketNo: 42, secret: randomUUID(), text: 'Bring ID.' };
+    expect(parseClientMessage(JSON.stringify(call))).toEqual(call);
+    expect(parseClientMessage(JSON.stringify(answer))).toEqual(answer);
+  });
+  it.each([
+    { action: 'speak', what: 'other', ticketNo: 42 },
+    { action: 'speak', what: 'call', ticketNo: 42, text: 'Client text' },
+    { action: 'speak', what: 'answer', ticketNo: 42, text: 'No secret' },
+    { action: 'speak', what: 'answer', ticketNo: 42, secret: randomUUID(), text: 'a'.repeat(601) },
+    { action: 'speak', what: 'answer', ticketNo: 42, secret: randomUUID(), text: '' },
+  ])('refuses invalid speech %j', message => {
+    expect(parseClientMessage(JSON.stringify(message))).toEqual({ error: 'bad_request' });
+  });
+});

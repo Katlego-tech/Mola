@@ -441,3 +441,64 @@ it('replaces the QR when a new join code arrives and hides the old QR while gene
   receive({ type: 'board', board: board() });
   expect(screen.queryByAltText('QR code to join the queue')).toBeNull();
 });
+
+describe('screen speech', () => {
+  beforeEach(() => {
+    vi.stubGlobal('AudioContext', class {
+      createMediaStreamDestination() { return { stream: null }; }
+      resume() { return Promise.resolve(); }
+      close() { return Promise.resolve(); }
+    });
+    vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue();
+    vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => undefined);
+  });
+  afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+  it('keeps QR unlock available with voice and ignores calls from older boards', () => {
+    window.history.replaceState(null, '', '/screen?office=demo');
+    ready();
+    fireEvent.click(screen.getByRole('button', { name: 'Voice off' }));
+    receive({ type: 'board', board: board({ snapshotAt: 2000 }) });
+    const calls = [{ ticketNo: 7, desk: 'Desk 1', deadline: null }];
+    receive({ type: 'board', board: board({ snapshotAt: 1000, calling: calls }) });
+    expect(fake.sent.filter(m => (m as { action: string }).action === 'speak')).toHaveLength(0);
+    fireEvent.click(screen.getByRole('button', { name: 'Unlock' }));
+    const staffKey = crypto.randomUUID();
+    fireEvent.change(screen.getByLabelText('Staff key'), { target: { value: staffKey } });
+    fireEvent.click(screen.getByRole('button', { name: 'Unlock' }));
+    const join = { code: crypto.randomUUID().replaceAll('-', '').slice(0, 16), expiresAt: Date.now() + 120000 };
+    receive({ type: 'board', board: board({ snapshotAt: 2000, calling: calls }), join });
+    expect(fake.sent).toContainEqual({ action: 'watch', staffKey });
+    expect(fake.sent.filter(m => (m as { action: string }).action === 'speak')).toEqual([{ action: 'speak', what: 'call', ticketNo: 7 }]);
+    expect(qr.toDataURL).toHaveBeenLastCalledWith(expect.stringContaining(`&c=${join.code}`), expect.any(Object));
+    expect(screen.getByRole('button', { name: 'Voice on' })).toBeTruthy();
+  });
+  it('defaults off and sends nothing for a call', () => {
+    ready();
+    expect(screen.getByRole('button', { name: 'Voice off' }).getAttribute('aria-pressed')).toBe('false');
+    receive({ type: 'board', board: board({ calling: [{ ticketNo: 7, desk: 'Desk 1', deadline: null }] }) });
+    expect(fake.sent).not.toContainEqual({ action: 'speak', what: 'call', ticketNo: 7 });
+  });
+  it('persists the toggle and announces calls once, in order across reconnects', () => {
+    ready();
+    fireEvent.click(screen.getByRole('button', { name: 'Voice off' }));
+    expect(localStorage.getItem('mola:voice:screen')).toBe('true');
+    const calls = board({ calling: [{ ticketNo: 7, desk: 'Desk 1', deadline: null }, { ticketNo: 8, desk: 'Desk 2', deadline: null }] });
+    receive({ type: 'board', board: calls });
+    expect(fake.sent.filter((m) => (m as { action: string }).action === 'speak')).toEqual([{ action: 'speak', what: 'call', ticketNo: 7 }]);
+    receive({ type: 'speech', what: 'call', ticketNo: 7, url: '/voice/first.mp3' });
+    expect(fake.sent.filter((m) => (m as { action: string }).action === 'speak')).toEqual([{ action: 'speak', what: 'call', ticketNo: 7 }, { action: 'speak', what: 'call', ticketNo: 8 }]);
+    receive({ type: 'speech', what: 'call', ticketNo: 8, url: '/voice/second.mp3' });
+    open();
+    receive({ type: 'board', board: calls });
+    expect(fake.sent.filter((m) => (m as { action: string }).action === 'speak')).toHaveLength(2);
+  });
+  it('shows an off toggle and a hint when remembered voice cannot play', async () => {
+    localStorage.setItem('mola:voice:screen', 'true');
+    vi.mocked(HTMLMediaElement.prototype.play).mockRejectedValue(new Error('gesture needed'));
+    ready();
+    receive({ type: 'board', board: board({ calling: [{ ticketNo: 7, desk: 'Desk 1', deadline: null }] }) });
+    await act(async () => receive({ type: 'speech', what: 'call', ticketNo: 7, url: '/voice/first.mp3' }));
+    expect(screen.getByRole('button', { name: 'Voice off' }).getAttribute('aria-pressed')).toBe('false');
+    expect(screen.getByText('Tap to turn voice on')).toBeTruthy();
+  });
+});

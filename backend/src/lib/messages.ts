@@ -5,6 +5,8 @@ export type { DayStats } from './stats';
 import type { TicketStatus } from './model';
 
 export type ClientMessage =
+  | { action: 'speak'; what: 'call'; ticketNo: number }
+  | { action: 'speak'; what: 'answer'; ticketNo: number; secret: string; text: string }
   | { action: 'ask'; ticketNo: number; secret: string; question: string; lang: Lang }
   | { action: 'notes'; lang: Lang }
   | { action: 'saveNotes'; text: string; baseVersion: number; staffKey: string }
@@ -20,6 +22,7 @@ export type ClientMessage =
   | { action: 'callNext'; desk: string; staffKey: string };
 
 export type ServerMessage =
+  | { type: 'speech'; what: 'call' | 'answer'; ticketNo: number; url: string }
   | { type: 'answer'; question: string; found: boolean; answer: string | null; asksLeft: number }
   | { type: 'notes'; lang: Lang; version: number; text: string; translated: boolean }
   | { type: 'summary'; stats: DayStats; text: string | null }
@@ -48,7 +51,7 @@ export type NoticeCode =
 export type ErrorCode =
   | 'stale_code' | 'no_session' | 'bad_request' | 'unknown_action' | 'bad_ticket'
   | 'already_has_ticket' | 'not_called' | 'forbidden' | 'desk_busy' | 'internal'
-  | 'assist_unavailable' | 'ask_limit' | 'notes_conflict';
+  | 'assist_unavailable' | 'ask_limit' | 'notes_conflict' | 'voice_unavailable';
 
 export function parseClientMessage(
   body: string | undefined,
@@ -69,10 +72,23 @@ export function parseClientMessage(
     return { error: 'bad_request' };
   }
 
-  const byteLimit = message.action === 'saveNotes' ? 32768 : message.action === 'ask' ? 4096 : 1024;
+  const byteLimit = message.action === 'saveNotes' ? 32768 : (message.action === 'ask' || message.action === 'speak') ? 4096 : 1024;
   if (Buffer.byteLength(body, 'utf8') > byteLimit) return { error: 'bad_request' };
 
   switch (message.action) {
+    case 'speak':
+      if (!('ticketNo' in message) || typeof message.ticketNo !== 'number'
+        || !Number.isSafeInteger(message.ticketNo) || message.ticketNo < 1) return { error: 'bad_request' };
+      if ('what' in message && message.what === 'call' && Object.keys(message).length === 3) {
+        return { action: 'speak', what: 'call', ticketNo: message.ticketNo };
+      }
+      if ('what' in message && message.what === 'answer' && Object.keys(message).length === 5
+        && 'secret' in message && typeof message.secret === 'string' && message.secret.length >= 1 && message.secret.length <= 128
+        && 'text' in message && typeof message.text === 'string' && message.text.trim().length >= 1 && message.text.length <= 600) {
+        return { action: 'speak', what: 'answer', ticketNo: message.ticketNo, secret: message.secret, text: message.text };
+      }
+      return { error: 'bad_request' };
+
     case 'ask':
       if (Object.keys(message).length === 5
         && 'ticketNo' in message && typeof message.ticketNo === 'number'

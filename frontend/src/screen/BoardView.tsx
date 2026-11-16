@@ -5,13 +5,14 @@ import { CallingList } from './CallingList';
 import { ServingRow } from './ServingRow';
 import { SidePanel } from './SidePanel';
 
-export function BoardView({ board, receivedAt, joinUrl, onUnlock, reconnecting, children }: {
+export function BoardView({ board, receivedAt, joinUrl, onUnlock, reconnecting, children, voice }: {
   board: Board;
   receivedAt: number;
   joinUrl: string | null;
   onUnlock?(): void;
   reconnecting: boolean;
   children?: ReactNode;
+  voice?: ReactNode;
 }) {
   const empty = board.calling.length === 0 && board.serving.length === 0;
   return (
@@ -19,6 +20,7 @@ export function BoardView({ board, receivedAt, joinUrl, onUnlock, reconnecting, 
       <main className="grid min-w-0 grid-rows-[auto_1fr_auto_auto] gap-[3vh] px-[4.5vw] py-[5vh]">
         <header className="flex items-baseline justify-between">
           <span className="font-number text-[2.6vh] font-extrabold tracking-[0.02em] [font-stretch:125%]">MOLA</span>
+          {voice}
           <span className="text-[2.6vh] font-semibold text-muted">
             {reconnecting ? 'Reconnecting' : officeName(board.officeId)}
           </span>

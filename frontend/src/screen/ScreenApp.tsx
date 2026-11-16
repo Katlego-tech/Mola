@@ -1,5 +1,7 @@
+import { SpeakerHigh, SpeakerSlash } from '@phosphor-icons/react';
+import { useVoice } from '@/lib/voice';
 import { useEffect, useRef, useState } from 'react';
-import type { Board, ServerMessage } from '@/lib/messages';
+import type { Board, ClientMessage, ServerMessage } from '@/lib/messages';
 import { officeName } from '@/lib/format';
 import { OFFICE_ID, useOfficeSocket } from '@/lib/useOfficeSocket';
 import { BoardView } from './BoardView';
@@ -29,6 +31,10 @@ function write(storage: 'local' | 'session', key: string, value: string | null):
 }
 
 function ScreenBoard({ officeId, staff }: { officeId: string; staff: boolean }) {
+  const voice = useVoice('mola:voice:screen');
+  const interruptVoice = voice.interrupt;
+  const sendRef = useRef<((msg: ClientMessage) => void) | null>(null);
+  const announced = useRef(new Set<string>());
   const [view, setView] = useState<{ board: Board; receivedAt: number } | null>(null);
   const [join, setJoin] = useState<{ code: string; expiresAt: number } | null>(null);
   const lastRefresh = useRef<{ code: string; expiresAt: number; sentAt: number } | null>(null);
@@ -61,6 +67,7 @@ function ScreenBoard({ officeId, staff }: { officeId: string; staff: boolean }) 
   const { state, send } = useOfficeSocket(officeId, 'screen', {
     onOpen: (sendNow) => {
       interrupt();
+      voice.interrupt();
       pendingRef.current = null;
       setPending(false);
       const staffKey = keyRef.current;
@@ -71,6 +78,8 @@ function ScreenBoard({ officeId, staff }: { officeId: string; staff: boolean }) 
         if (msg.board.snapshotAt < snapshotAt.current) return;
         snapshotAt.current = msg.board.snapshotAt;
       }
+      const spoken = voice.receive(msg);
+      if (spoken || msg.type === 'speech' || (msg.type === 'error' && msg.code === 'voice_unavailable')) return;
       notesDialog.current?.receive(msg);
       switch (msg.type) {
         case 'summary':
@@ -81,6 +90,14 @@ function ScreenBoard({ officeId, staff }: { officeId: string; staff: boolean }) 
         case 'status':
         case 'board': {
           if (msg.type === 'board') setJoin(msg.join ?? null);
+          if (voice.enabled) {
+            for (const call of msg.board.calling) {
+              const key = `${call.ticketNo}:${call.desk}`;
+              if (announced.current.has(key)) continue;
+              announced.current.add(key);
+              voice.call(call.ticketNo, message => sendRef.current?.(message));
+            }
+          }
           boardRef.current = msg.board;
           setView({ board: msg.board, receivedAt: Date.now() });
           const sent = pendingRef.current;
@@ -123,12 +140,14 @@ function ScreenBoard({ officeId, staff }: { officeId: string; staff: boolean }) 
       }
     },
   });
-  useEffect(() => {
-    if (state !== 'open') interrupt();
-  }, [state]);
-
-  const sendRef = useRef(send);
   useEffect(() => { sendRef.current = send; });
+  useEffect(() => {
+    if (state !== 'open') {
+      interruptVoice();
+      interrupt();
+    }
+  }, [state, interruptVoice]);
+
   useEffect(() => {
     if (!join || state !== 'open') return;
     const previous = lastRefresh.current;
@@ -138,7 +157,7 @@ function ScreenBoard({ officeId, staff }: { officeId: string; staff: boolean }) 
     const expiresIn = join.expiresAt - (view?.board.serverTime ?? Date.now()) - (Date.now() - (view?.receivedAt ?? Date.now()));
     const refresh = () => {
       lastRefresh.current = { ...join, sentAt: Date.now() };
-      sendRef.current({ action: 'refreshJoinCode' });
+      sendRef.current?.({ action: 'refreshJoinCode' });
       timer = setTimeout(refresh, 5000);
     };
     let timer = setTimeout(refresh, Math.max(0, expiresIn, retryDelay));
@@ -169,7 +188,12 @@ function ScreenBoard({ officeId, staff }: { officeId: string; staff: boolean }) 
       {view ? <BoardView board={view.board} receivedAt={view.receivedAt} joinUrl={joinUrl} onUnlock={() => {
         unlockAction.current = null;
         setUnlock({ open: true, error: false });
-      }} reconnecting={state !== 'open'}>
+      }} reconnecting={state !== 'open'} voice={<div className="grid gap-1">
+        <button type="button" aria-pressed={voice.enabled} onClick={voice.toggle} className="inline-flex min-h-9 items-center gap-1.5 rounded-full border-[1.5px] border-line bg-surface px-3 text-[2vh] font-bold whitespace-nowrap">
+          {voice.enabled ? <SpeakerHigh weight="bold" aria-hidden /> : <SpeakerSlash weight="bold" aria-hidden />}{voice.enabled ? 'Voice on' : 'Voice off'}
+        </button>
+        {voice.hint && <span role="status" className="text-[1.6vh] text-muted">Tap to turn voice on</span>}
+      </div>}>
         {staff && (
           <StaffStrip
             desk={desk}

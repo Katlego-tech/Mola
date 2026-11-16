@@ -297,3 +297,22 @@ export async function ensureJoinCode(officeId: string, newCode: string, nowMs: n
   }
   return { code: office.joinCode, issuedAt: office.joinCodeIssuedAt };
 }
+
+export async function reserveSpeak(officeId: string, ticketNo: number, max: number): Promise<number> {
+  const { Attributes } = await ddb.send(new UpdateCommand({
+    TableName: TABLE(), Key: { pk: officePk(officeId), sk: ticketSk(ticketNo) },
+    UpdateExpression: 'ADD speaks :one', ReturnValues: 'UPDATED_NEW',
+    ConditionExpression: '#s IN (:waiting, :called, :serving) AND (attribute_not_exists(speaks) OR speaks < :max)',
+    ExpressionAttributeNames: { '#s': 'status' },
+    ExpressionAttributeValues: { ':one': 1, ':max': max, ':waiting': 'waiting', ':called': 'called', ':serving': 'serving' },
+  }));
+  return Attributes?.speaks as number;
+}
+
+export async function refundSpeak(officeId: string, ticketNo: number): Promise<void> {
+  await ddb.send(new UpdateCommand({
+    TableName: TABLE(), Key: { pk: officePk(officeId), sk: ticketSk(ticketNo) },
+    UpdateExpression: 'ADD speaks :minus', ConditionExpression: 'speaks > :zero',
+    ExpressionAttributeValues: { ':minus': -1, ':zero': 0 },
+  }));
+}

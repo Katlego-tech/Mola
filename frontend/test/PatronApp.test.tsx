@@ -442,3 +442,77 @@ it('removes the join button after a stale code, including reconnect', () => {
   expect(screen.getByText('That code has expired or was already used. Scan the code on the screen again.')).toBeTruthy();
   expect(screen.queryByRole('button', { name: 'Get a number' })).toBeNull();
 });
+
+describe('patron speech', () => {
+  beforeEach(() => {
+    vi.stubGlobal('AudioContext', class {
+      createMediaStreamDestination() { return { stream: null }; }
+      resume() { return Promise.resolve(); }
+      close() { return Promise.resolve(); }
+    });
+    vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue();
+    vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => undefined);
+  });
+  afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+  it('defaults off and does not request speech', () => {
+    render(<PatronApp />); open();
+    expect(screen.getByRole('button', { name: 'Voice' }).getAttribute('aria-pressed')).toBe('false');
+    receive({ type: 'status', ticket: ticket({ status: 'called', desk: 'Desk 1', deadline: Date.now() + 120000 }), board });
+    expect(sent().filter(m => m.action === 'speak')).toHaveLength(0);
+  });
+  it('ignores older calls before recording announcements and accepts a fresh call once', () => {
+    render(<PatronApp />); open();
+    fireEvent.click(screen.getByRole('button', { name: 'Voice' }));
+    const called = ticket({ status: 'called', desk: 'Desk 1', deadline: Date.now() + 120000 });
+    receive({ type: 'board', board: { ...board, snapshotAt: 20 } });
+    receive({ type: 'status', ticket: called, board: { ...board, snapshotAt: 10 } });
+    expect(sent().filter(m => m.action === 'speak')).toHaveLength(0);
+    receive({ type: 'status', ticket: called, board: { ...board, snapshotAt: 20 } });
+    receive({ type: 'speech', what: 'call', ticketNo: 7, url: '/voice/call.mp3' });
+    receive({ type: 'status', ticket: called, board: { ...board, snapshotAt: 20 } });
+    expect(sent().filter(m => m.action === 'speak')).toHaveLength(1);
+  });
+  it('remembers voice and speaks once per deadline change', () => {
+    render(<PatronApp />); open();
+    fireEvent.click(screen.getByRole('button', { name: 'Voice' }));
+    expect(localStorage.getItem('mola:voice')).toBe('true');
+    const called = ticket({ status: 'called', desk: 'Desk 1', deadline: Date.now() + 120000 });
+    receive({ type: 'status', ticket: { ...called, deadline: null }, board });
+    expect(sent().filter(m => m.action === 'speak')).toHaveLength(0);
+    receive({ type: 'status', ticket: called, board });
+    receive({ type: 'speech', what: 'call', ticketNo: 7, url: '/voice/call.mp3' });
+    receive({ type: 'status', ticket: called, board });
+    open(); receive({ type: 'status', ticket: called, board });
+    expect(sent().filter(m => m.action === 'speak')).toHaveLength(1);
+    receive({ type: 'status', ticket: { ...called, deadline: (called.deadline ?? 0) + 1000 }, board });
+    expect(sent().filter(m => m.action === 'speak')).toHaveLength(2);
+  });
+});
+
+
+it('requests answer speech on Listen and shows server and playback failures beside the button', async () => {
+    vi.stubGlobal('AudioContext', class {
+      createMediaStreamDestination() { return { stream: null }; }
+      resume() { return Promise.resolve(); }
+      close() { return Promise.resolve(); }
+    });
+  vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue();
+  vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => undefined);
+  try {
+    render(<PatronApp />); open();
+    receive({ type: 'ticket', officeId: 'demo', ticketNo: 7, secret });
+    receive({ type: 'status', ticket: ticket(), board });
+    fireEvent.click(screen.getByRole('button', { name: 'Ask the office' }));
+    fireEvent.change(screen.getByLabelText('Your question'), { target: { value: 'Bring ID?' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Ask' }));
+    receive({ type: 'answer', question: 'Bring ID?', found: true, answer: 'Bring ID.', asksLeft: 9 });
+    fireEvent.click(screen.getByRole('button', { name: 'Listen' }));
+    expect(sent()).toContainEqual({ action: 'speak', what: 'answer', ticketNo: 7, secret, text: 'Bring ID.' });
+    receive({ type: 'error', code: 'voice_unavailable', message: "Couldn't play the answer." });
+    expect(screen.getByText("Couldn't play the answer.")).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Listen' }));
+    vi.mocked(HTMLMediaElement.prototype.play).mockRejectedValue(new Error('blocked'));
+    await act(async () => receive({ type: 'speech', what: 'answer', ticketNo: 7, url: '/voice/answer.mp3' }));
+    expect(screen.getByText("Couldn't play the answer.")).toBeTruthy();
+  } finally { vi.restoreAllMocks(); vi.unstubAllGlobals(); }
+});
