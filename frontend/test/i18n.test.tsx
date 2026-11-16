@@ -89,7 +89,7 @@ it('renders a non-English waiting position using only fixture numbers', () => {
   localStorage.setItem('mola:lang', 'zu');
   const ticket: TicketView = { ticketNo: 42, status: 'waiting', position: 3, desk: null, deadline: null, misses: 0 };
   const board: Board = {
-    officeId: 'clinic', calling: [], serving: [], waitingCount: 3, upNext: [42], serverTime: Date.now(),
+    officeId: 'clinic', calling: [], serving: [], waitingCount: 3, upNext: [42], notesVersion: 0, serverTime: Date.now(),
     rules: { confirmWindowSeconds: 120, dropBackPlaces: 3, maxMisses: 2 },
   };
   const { container } = render(
