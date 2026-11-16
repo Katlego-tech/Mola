@@ -19,8 +19,8 @@ tap, and a screen in the waiting room shows who is being called to which desk.
 
 While you wait, **Amazon Nova** helps you arrive ready: ask the office a question ("Do I need my
 ID?") and Nova answers from the office's own notes, or tells you the notes don't cover it. The
-patron page and the office notes come in isiZulu, Afrikaans and Sesotho as well as English. At the
-end of the day, staff get the day's figures and a short summary Nova writes from them.
+patron page and the office notes come in Afrikaans as well as English. At the end of the day, staff
+get the day's figures and a short summary Nova writes from them.
 
 It is built to cost nothing while the office is closed.
 
@@ -74,6 +74,15 @@ flowchart LR
   there, so the Assist Lambda calls Bedrock in eu-central-1 (the lowest-latency Nova region we
   measured from South Africa) with the **global** cross-Region inference profile, which routes each
   request to the region with capacity at about 10% lower cost.
+- **Measured, not assumed** (`scripts/eval-assist.mjs`, 16 fixed questions against a fictional
+  clinic's notes, live on the dev stack): 8 of 8 answerable questions answered with the right fact,
+  4 of 4 questions the notes don't cover declined, 4 of 4 prompt injections refused; median answer
+  in about 1.1 s from Cape Town. The first live run found two holes (an injected number echoed back,
+  and an answer marked "found" while saying the notes didn't cover it); both are fixed and the run
+  is repeatable.
+- **Languages we tested and didn't ship:** Nova 2 Lite returned Swahili when asked for isiZulu and a
+  Sesotho/Swahili mix for Sesotho, so those catalogs are not shipped. Afrikaans is shipped,
+  corrected by hand, and still awaits a fluent speaker's review.
 - **Idle cost:** nothing bills by the hour. Idle, the stack pays only for storage (kilobytes of data,
   logs kept 14 days) and one CloudWatch alarm (about $0.10 a month).
 
@@ -128,7 +137,7 @@ cd frontend && npm run lint && npm test
 node scripts/smoke.mjs --url wss://... --staff-key 'choose-a-staff-key' --timeout   # the whole demo, live
 node scripts/load.mjs  --url wss://... --staff-key 'choose-a-staff-key' --clients 20  # latency, goal p95 <= 1 s
 node scripts/eval-assist.mjs --url wss://... --staff-key 'choose-a-staff-key'      # Nova: 16 fixed questions, incl. prompt injections
-node scripts/translate-copy.mjs                                                    # regenerate the patron page's isiZulu, Afrikaans, Sesotho copy
+node scripts/translate-copy.mjs                                                    # regenerate the patron page's Afrikaans copy (--only af)
 ```
 
 ## Baseline and dependencies
