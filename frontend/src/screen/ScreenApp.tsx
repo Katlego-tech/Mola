@@ -38,13 +38,23 @@ function ScreenBoard({ officeId, staff }: { officeId: string; staff: boolean }) 
   const deskRef = useRef(desk);
   const boardRef = useRef<Board | null>(null);
   const notesDialog = useRef<NotesDialogHandle>(null);
+  const summaryPending = useRef(false);
+  const [summaryFailed, setSummaryFailed] = useState(false);
   const [summaryOpen, setSummaryOpen] = useState(false);
   const [summary, setSummary] = useState<Extract<ServerMessage, { type: 'summary' }> | null>(null);
   const unlockAction = useRef<((key: string) => void) | null>(null);
   const keyName = `mola:staff:${officeId}`;
 
+  const interrupt = () => {
+    notesDialog.current?.interrupt();
+    if (!summaryPending.current) return;
+    summaryPending.current = false;
+    setSummaryFailed(true);
+  };
+
   const { state, send } = useOfficeSocket(officeId, 'screen', {
     onOpen: (sendNow) => {
+      interrupt();
       pendingRef.current = null;
       setPending(false);
       sendNow({ action: 'watch' });
@@ -53,6 +63,8 @@ function ScreenBoard({ officeId, staff }: { officeId: string; staff: boolean }) 
       notesDialog.current?.receive(msg);
       switch (msg.type) {
         case 'summary':
+          summaryPending.current = false;
+          setSummaryFailed(false);
           setSummary(msg);
           break;
         case 'board': {
@@ -73,6 +85,10 @@ function ScreenBoard({ officeId, staff }: { officeId: string; staff: boolean }) 
           setPending(false);
           break;
         case 'error': {
+          if (summaryPending.current) {
+            summaryPending.current = false;
+            setSummaryFailed(true);
+          }
           pendingRef.current = null;
           setPending(false);
           if (msg.code === 'forbidden') {
@@ -92,6 +108,10 @@ function ScreenBoard({ officeId, staff }: { officeId: string; staff: boolean }) 
       }
     },
   });
+  useEffect(() => {
+    if (state !== 'open') interrupt();
+  }, [state]);
+
   const callNext = (staffKey: string) => {
     if (!DESK.test(deskRef.current)) {
       setLog('Give this desk a name of up to 20 letters, numbers or spaces.');
@@ -133,6 +153,8 @@ function ScreenBoard({ officeId, staff }: { officeId: string; staff: boolean }) 
             onSummary={() => withKey((staffKey) => {
               setSummary(null);
               setSummaryOpen(true);
+              summaryPending.current = state === 'open';
+              setSummaryFailed(state !== 'open');
               send({ action: 'daySummary', staffKey });
             })}
             onCallNext={() => withKey(callNext)}
@@ -142,6 +164,7 @@ function ScreenBoard({ officeId, staff }: { officeId: string; staff: boolean }) 
       {staff && <>
         <NotesDialog
           ref={notesDialog}
+          online={state === 'open'}
           onLoad={() => send({ action: 'notes', lang: 'en' })}
           onSave={(text, baseVersion) => withKey((staffKey) => {
             notesDialog.current?.setSaving(true);
@@ -149,7 +172,15 @@ function ScreenBoard({ officeId, staff }: { officeId: string; staff: boolean }) 
           })}
           onSaved={() => setLog('Notes saved.')}
         />
-        {summaryOpen && <SummaryDialog officeId={officeId} summary={summary} onClose={() => setSummaryOpen(false)} />}
+        {summaryOpen && <SummaryDialog officeId={officeId} summary={summary} failed={summaryFailed} onRetry={() => withKey((staffKey) => {
+          setSummary(null);
+          summaryPending.current = state === 'open';
+          setSummaryFailed(state !== 'open');
+          send({ action: 'daySummary', staffKey });
+        })} onClose={() => {
+          summaryPending.current = false;
+          setSummaryOpen(false);
+        }} />}
         <UnlockDialog
           open={unlock.open}
           error={unlock.error}

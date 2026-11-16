@@ -226,3 +226,60 @@ describe('office questions', () => {
     expect(sent().filter((m) => m.action === 'notes')).toHaveLength(3);
   });
 });
+
+
+it('blocks asks offline and reloads notes on each reconnect', () => {
+  openAsk();
+  act(() => fake.opts?.onState('backoff'));
+  fireEvent.change(screen.getByLabelText('Your question'), { target: { value: 'When do you close?' } });
+  expect((screen.getByRole('button', { name: 'Ask' }) as HTMLButtonElement).disabled).toBe(true);
+  fireEvent.submit(screen.getByLabelText('Your question').closest('form') as HTMLFormElement);
+  expect(sent().filter((m) => m.action === 'ask')).toHaveLength(0);
+  open();
+  expect(sent().filter((m) => m.action === 'notes')).toHaveLength(2);
+  expect((screen.getByRole('button', { name: 'Ask' }) as HTMLButtonElement).disabled).toBe(false);
+});
+
+it('releases an interrupted ask with an unavailable reply and allows another question', () => {
+  openAsk();
+  ask();
+  act(() => fake.opts?.onState('backoff'));
+  expect(screen.getByText("The assistant isn't available right now. Ask at the desk.")).toBeTruthy();
+  expect((screen.getByLabelText('Your question') as HTMLInputElement).disabled).toBe(false);
+  open();
+  ask('When do you close?');
+  expect(sent().filter((m) => m.action === 'ask')).toHaveLength(2);
+});
+
+it('answers an ask with unavailable copy on an unexpected error', () => {
+  openAsk();
+  ask();
+  receive({ type: 'error', code: 'internal', message: 'x' });
+  expect(screen.getByText("The assistant isn't available right now. Ask at the desk.")).toBeTruthy();
+  ask('When do you close?');
+  expect(sent().filter((m) => m.action === 'ask')).toHaveLength(2);
+});
+
+
+it('loads notes when an Ask sheet opened offline reconnects', () => {
+  localStorage.setItem('mola:demo', JSON.stringify({ ticketNo: 7, secret }));
+  render(<PatronApp />);
+  open();
+  receive({ type: 'status', ticket: ticket(), board });
+  act(() => fake.opts?.onState('backoff'));
+  fireEvent.click(screen.getByRole('button', { name: 'Ask the office' }));
+  expect(sent().filter((m) => m.action === 'notes')).toHaveLength(0);
+  open();
+  expect(sent().filter((m) => m.action === 'notes')).toHaveLength(1);
+  receive({ type: 'notes', lang: 'en', version: 0, text: 'Recovered notes', translated: false });
+  expect(screen.getByText('Recovered notes')).toBeTruthy();
+});
+
+it('releases an ask on reopen even without a rendered disconnected state', () => {
+  openAsk();
+  ask();
+  open();
+  expect(screen.getByText("The assistant isn't available right now. Ask at the desk.")).toBeTruthy();
+  ask('Can I return later?');
+  expect(sent().filter((m) => m.action === 'ask')).toHaveLength(2);
+});

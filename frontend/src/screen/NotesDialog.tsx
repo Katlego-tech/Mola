@@ -5,12 +5,14 @@ import type { ServerMessage } from '@/lib/messages';
 
 export interface NotesDialogHandle {
   open(): void;
+  interrupt(): void;
   setSaving(pending: boolean): void;
   receive(message: ServerMessage): void;
 }
 
-export function NotesDialog({ ref, onLoad, onSave, onSaved }: {
+export function NotesDialog({ ref, online, onLoad, onSave, onSaved }: {
   ref: Ref<NotesDialogHandle>;
+  online: boolean;
   onLoad(): void;
   onSave(text: string, baseVersion: number): void;
   onSaved(): void;
@@ -18,13 +20,23 @@ export function NotesDialog({ ref, onLoad, onSave, onSaved }: {
   const [open, setOpen] = useState(false);
   const [text, setText] = useState('');
   const [baseVersion, setBaseVersion] = useState<number | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [pending, setPending] = useState(false);
   const phase = useRef<'closed' | 'loading' | 'ready' | 'saving' | 'conflict'>('closed');
   const [conflict, setConflict] = useState(false);
   const [serverText, setServerText] = useState<string | null>(null);
   const close = () => { phase.current = 'closed'; setOpen(false); };
 
+  const load = () => {
+    setLoadFailed(!online);
+    if (online) onLoad();
+  };
+  const interrupt = () => {
+    if (phase.current === 'loading' || phase.current === 'conflict') setLoadFailed(true);
+  };
+
   useImperativeHandle(ref, () => ({
+    interrupt,
     setSaving: (saving) => {
       if (phase.current === 'closed') return;
       phase.current = saving ? 'saving' : 'ready';
@@ -37,7 +49,7 @@ export function NotesDialog({ ref, onLoad, onSave, onSaved }: {
       setPending(false);
       setConflict(false);
       setServerText(null);
-      onLoad();
+      load();
     },
     receive: (message) => {
       if (phase.current === 'closed') return;
@@ -50,6 +62,7 @@ export function NotesDialog({ ref, onLoad, onSave, onSaved }: {
         if (phase.current === 'conflict') setServerText(message.text);
         else if (phase.current === 'loading') setText(message.text);
         else return;
+        setLoadFailed(false);
         setBaseVersion(message.version);
         phase.current = 'ready';
         setPending(false);
@@ -59,7 +72,9 @@ export function NotesDialog({ ref, onLoad, onSave, onSaved }: {
           phase.current = 'conflict';
           setConflict(true);
           setBaseVersion(null);
-          onLoad();
+          load();
+        } else if (phase.current === 'loading' || phase.current === 'conflict') {
+          interrupt();
         } else {
           phase.current = 'ready';
           setPending(false);
@@ -86,7 +101,11 @@ export function NotesDialog({ ref, onLoad, onSave, onSaved }: {
               <label htmlFor="office-notes" className="text-[2vh] font-bold">Notes</label>
               <span className="font-mono text-[2vh] text-muted">{text.length} of 4000</span>
             </div>
-            <textarea id="office-notes" value={text} maxLength={4000} disabled={pending || (baseVersion === null && !conflict)} onChange={(e) => setText(e.target.value)} className="min-h-[30vh] resize-none rounded-[14px] border-2 border-muted bg-ground px-[1vw] py-[1.6vh] text-[2.3vh] leading-[1.45]" />
+            <textarea id="office-notes" value={text} maxLength={4000} disabled={pending || baseVersion === null} onChange={(e) => setText(e.target.value)} className="min-h-[30vh] resize-none rounded-[14px] border-2 border-muted bg-ground px-[1vw] py-[1.6vh] text-[2.3vh] leading-[1.45]" />
+            {loadFailed && <div role="alert" className="grid gap-[1vh] text-[2.2vh] text-muted">
+              <p>Couldn't load the notes. Try again.</p>
+              <Button type="button" onClick={load}>Try again</Button>
+            </div>}
             {conflict && <p role="alert" className="text-[2.2vh] text-ticket">Someone else changed the notes. Your text is kept. Check theirs, then save again.</p>}
             {serverText !== null && <p className="whitespace-pre-line rounded-[14px] bg-ground p-[1vw] text-[2.2vh]">{serverText}</p>}
             <div className="flex justify-end gap-[1vw]">
